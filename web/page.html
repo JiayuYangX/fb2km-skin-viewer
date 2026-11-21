@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>fb2km Skin Viewer</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <img class="brand" src="/brand.png" alt="" width="20" height="20" draggable="false">
+    <strong>fb2km Skin Viewer</strong>
+    <span class="io">
+      <button id="browse-folder" title="watched live">打开皮肤目录</button>
+      <button id="browse-pkg" title="*.fbskin / *.zip">打开皮肤包</button>
+    </span>
+    <label id="skin-pick" title="every skindef.txt found beside the one you opened">skin <select id="skin"></select></label>
+    <label>layout <select id="layout"></select></label>
+    <span id="status" class="muted"></span>
+    <span class="prefs">
+      <label class="lang-label" for="lang">语言</label>
+      <select id="lang" title="language">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <button id="theme-toggle" title="light / dark / follow the system"></button>
+    </span>
+  </header>
+
+
+  <div id="player">
+    <div class="side-actions">
+      <button id="add-audio" title="append to the list">上传音频文件</button>
+      <button id="open-list" title="replace the list">打开播放列表</button>
+      <span class="clear-slot">
+        <button id="clear-list" title="clear the list">
+          <svg viewBox="0 0 24 24"><path d="M3.5 6.5h17M9.5 3.5h5M6.5 6.5l.9 14h9.2l.9-14"/></svg>
+        </button>
+      </span>
+      <input id="pick-audio-add" type="file" multiple accept="audio/*" hidden>
+      <input id="pick-audio-list" type="file" accept=".m3u,.m3u8,audio/*" hidden>
+    </div>
+    <span class="sep"></span>
+    <div class="transport">
+      <button id="btn-prev" title="previous">
+        <svg viewBox="0 0 24 24"><path d="M7 5h2.1v14H7z"/><path d="M19 5v14L9.6 12z"/></svg>
+      </button>
+      <button id="btn-play" title="play or pause">
+        <svg viewBox="0 0 24 24"><path id="play-shape" d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button id="btn-next" title="next">
+        <svg viewBox="0 0 24 24"><path d="M14.9 5H17v14h-2.1z"/><path d="M5 5v14l9.4-7z"/></svg>
+      </button>
+      <button id="btn-stop" title="stop">
+        <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/></svg>
+      </button>
+      <input id="seek" class="idle" type="range" min="0" max="1000" value="0" step="1" disabled>
+      <span class="time"><span id="cur">--:--</span> / <span id="dur">--:--</span></span>
+    </div>
+    <span class="sep"></span>
+    <span class="modes">
+      <label class="order" id="order-label">Order
+        <select id="order">
+          <option value="default">Default</option>
+          <option value="one">One Track</option>
+          <option value="shuffle">Shuffle</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="mode-repeat"> <span id="repeat-label">Repeat</span></label>
+      <label class="check"><input type="checkbox" id="mode-stop"> <span id="stop-label">Stop after current</span></label>
+    </span>
+  </div>
+
+  <main>
+    <aside id="sidebar">
+      <ol id="list"></ol>
+    </aside>
+    <section id="right">
+      <div id="wrap"><div id="stage"></div></div>
+    </section>
+  </main>
+
+  <audio id="audio" hidden></audio>
+
+  <script src="tf.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
