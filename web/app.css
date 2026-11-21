@@ -1,0 +1,416 @@
+/* Roboto, Apache 2.0 - the font the app itself draws with on Android */
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/Roboto-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/Roboto-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/Roboto-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/Roboto-MediumItalic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/Roboto-Italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Roboto";
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/Roboto-BoldItalic.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #0f0f12; --panel: #1b1b1f; --panel2: #17171b;
+  --line: #2a2a30; --line2: #26262e;
+  --fg: #ddd; --fg-strong: #fff;
+  --ctl: #2a2a30; --ctl-fg: #eee; --ctl-line: #3a3a42;
+  --ctl-hover: #34343c; --ctl-active: #3d3d47;
+  --icon: #c6c6d2; --muted: #8a8a95; --accent: #5aa0ff; --danger: #ff8a8a;
+  --list-fg: #b9b9c2;
+  --rail: #3a3a42; --rail-on: #ffffff;
+  --icon-solid: #ffffff;      /* pure white, like the transport glyphs */
+  --drop: #4a4a57;
+  --side: 254px;
+  --bar: 36px;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f5f7; --panel: #ffffff; --panel2: #fafafb;
+  --line: #e3e3ea; --line2: #eeeef2;
+  --fg: #23232a; --fg-strong: #000;
+  --ctl: #f1f1f5; --ctl-fg: #23232a; --ctl-line: #d7d7e0;
+  --ctl-hover: #e8e8ee; --ctl-active: #dedee6;
+  --icon: #5a5a66; --muted: #6b6b78; --accent: #2b6fd6; --danger: #c0392b;
+  --list-fg: #3f3f49;
+  --rail: #cfcfd8; --rail-on: #3a3a48;
+  --icon-solid: #000000;      /* pure black on the light theme */
+  --drop: #c6c6d2;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    color-scheme: light;
+    --bg: #f5f5f7; --panel: #ffffff; --panel2: #fafafb;
+    --line: #e3e3ea; --line2: #eeeef2;
+    --fg: #23232a; --fg-strong: #000;
+    --ctl: #f1f1f5; --ctl-fg: #23232a; --ctl-line: #d7d7e0;
+    --ctl-hover: #e8e8ee; --ctl-active: #dedee6;
+    --icon: #5a5a66; --muted: #6b6b78; --accent: #2b6fd6; --danger: #c0392b;
+  --list-fg: #3f3f49;
+    --rail: #cfcfd8; --rail-on: #3a3a48;
+  --icon-solid: #000000;      /* pure black on the light theme */
+    --drop: #c6c6d2;
+  --drop: #c6c6d2;
+  }
+}
+* { box-sizing: border-box; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 "Roboto", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans CJK JP", "Noto Sans JP", "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.brand {
+  width: 20px; height: 20px; flex: none; display: block;
+  user-select: none; -webkit-user-drag: none; pointer-events: none;
+  margin-right: -5px;                 /* header gap is 14px; the mark sits closer */
+}
+
+.toast {
+  position: fixed; left: 50%; bottom: 18px;
+  transform: translate(-50%, 0);
+  min-width: 170px; max-width: 64vw;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: var(--panel); color: var(--fg-strong);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .38);
+  font-size: 12.5px; line-height: 1.4; text-align: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s ease;          /* leaving fades where it stands */
+  z-index: 60;
+}
+.toast.show {
+  opacity: 1;
+  animation: toast-rise .22s ease-out;   /* arriving rises from the bottom */
+}
+@keyframes toast-rise {
+  from { transform: translate(-50%, 22px); }
+  to   { transform: translate(-50%, 0); }
+}
+
+header {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+header strong { color: var(--fg-strong); margin-right: 6px; font-size: 16px; letter-spacing: 0; transform: translateY(1px); }
+
+select, button {
+  font: inherit;
+  background: var(--ctl);
+  color: var(--ctl-fg);
+  border: 1px solid var(--ctl-line);
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+button { cursor: pointer; }
+/* only text buttons need a minimum width; icon buttons size themselves */
+header button, .side-actions button { min-width: 34px; }
+button:hover { background: var(--ctl-hover); }
+button:active { background: var(--ctl-active); }
+
+#right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+#player {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;               /* narrow windows wrap, like the header */
+  gap: 0;
+  min-height: var(--bar);        /* was a fixed height: wrapping needs room */
+  align-content: flex-start;
+  padding: 0;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--line2);
+}
+.side-actions {
+  flex: 0 0 var(--side);
+  width: var(--side);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 0 10px;      /* runs all the way to the separator */
+  box-sizing: border-box;
+}
+.side-actions > button:not(#clear-list) { flex: 0 0 auto; }
+.clear-slot {
+  flex: 0 0 26px;           /* exactly the button: no slack on either side */
+  display: grid;
+  place-items: center;
+}
+.side-actions button { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+.sep { flex: 0 0 1px; width: 1px; height: 20px; min-height: 20px; background: var(--line); }
+
+/* every wrapped line keeps a full bar height, so two lines are twice as tall;
+   the little rules keep their own short height */
+#player > *:not(.sep) { min-height: var(--bar); }
+
+/* the clear button is a square version of the two buttons beside it */
+#clear-list {
+  flex: none;
+  width: 26px; height: 26px; min-width: 26px;
+  padding: 0;
+  display: grid; place-items: center;
+}
+#clear-list svg {
+  width: 17px; height: 17px;
+  fill: none;
+  stroke: var(--icon-solid);           /* pure white or black, no hover shift */
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.transport { flex: 1 1 320px; display: flex; align-items: center; gap: 6px; padding: 0 10px; min-width: 0; }
+.transport #seek { flex: 1 1 auto; min-width: 60px; }
+.transport .time { flex: 0 0 auto; white-space: nowrap; }
+#seek { margin: 0 4px 0 10px; }
+.transport button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;            /* the buttons keep their size when the page narrows */
+  min-width: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+.transport button svg { width: 18px; height: 18px; fill: var(--rail-on); }
+.transport button:hover { background: var(--ctl-hover); }
+.transport button:hover svg { fill: var(--fg-strong); }
+.transport button:active { background: var(--ctl-active); }
+.transport button:active svg { fill: var(--fg-strong); }
+
+.transport #btn-play svg { width: 20px; height: 20px; fill: var(--rail-on); }
+
+#seek {
+  flex: 1;
+  min-width: 120px;
+  height: 18px;
+  margin: 0 10px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* the played part is a gradient stop on the track itself, so --p is enough */
+#seek::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 1px;
+  background-image: linear-gradient(to right, var(--rail-on) var(--p, 0%), var(--rail) var(--p, 0%));
+}
+#seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4.5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--rail-on);
+}
+
+#seek.idle { cursor: default; }
+#seek.idle::-webkit-slider-runnable-track {
+  background-image: none;
+  background: var(--rail);            /* an empty rail, no filled part */
+}
+#seek.idle::-webkit-slider-thumb { opacity: 0; }
+#seek.idle::-moz-range-track { background: var(--rail); }
+#seek.idle::-moz-range-progress { background: transparent; }
+#seek.idle::-moz-range-thumb { opacity: 0; }
+
+#seek::-moz-range-track { height: 2px; border-radius: 1px; background: var(--rail); }
+#seek::-moz-range-progress { height: 2px; border-radius: 1px; background: var(--rail-on); }
+#seek::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--rail-on);
+}
+
+.time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.time #cur { color: var(--fg); }
+
+.modes { display: flex; align-items: center; gap: 12px; padding: 0 14px 0 10px; flex: 0 0 auto; }
+.modes label { display: flex; align-items: center; gap: 6px; color: var(--fg); white-space: nowrap; }
+.modes select { padding: 3px 6px; }
+.modes input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+.modes button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.modes button:hover { background: #23232b; color: #b9b9c4; }
+.modes button.on { background: #2b2b33; color: #fff; }
+
+main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+
+#sidebar {
+  width: var(--side);
+  flex: 0 0 var(--side);
+  border-right: 1px solid var(--line);
+  background: var(--panel2);
+  overflow-y: auto;
+  min-height: 0;
+}
+#list { list-style: none; margin: 0; padding: 0; counter-reset: track; }
+#list li {
+  counter-increment: track;
+  color: var(--list-fg);
+  padding: 6px 12px 6px 34px;
+  position: relative;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#list li::before {
+  content: counter(track);
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+#list li:hover { background: var(--ctl-hover); }
+#list li.current { background: var(--ctl-active); color: var(--fg-strong); }
+#list li.current::before { color: var(--fg-strong); }
+#list .sub { display: block; font-size: 11px; color: var(--muted); }
+#list li.current .sub { color: var(--fg); }
+
+#wrap {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#stage {
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 8px 34px #000a;
+  user-select: none;
+}
+#stage > *, #stage .buf > * { position: absolute; }
+#stage img { -webkit-user-drag: none; }   /* clicks still belong to the buttons */
+
+.lbl {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "Roboto", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans CJK JP", "Noto Sans JP", "Microsoft YaHei", "Segoe UI Symbol", "Segoe UI", sans-serif;
+}
+.muted { color: var(--muted); }
+
+/* opening skins and audio from the page */
+.io { display: flex; align-items: center; gap: 6px; }
+.io #skin-path {
+  width: 240px; background: #1d1d20; color: #ddd; border: 1px solid #34343a;
+  border-radius: 6px; padding: 3px 8px; font: inherit;
+}
+.io .pick, .io #open-skin {
+  cursor: pointer; color: var(--ctl-fg); background: var(--ctl);
+  border: 1px solid var(--ctl-line); border-radius: 6px; padding: 3px 10px; font: inherit;
+}
+.io .pick:hover, .io #open-skin:hover { background: var(--ctl-hover); }
+
+/* playlist column: add vs replace, and row editing */
+
+#list li { position: relative; padding-right: 22px; }
+#list li .drop {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: none; cursor: pointer; color: var(--muted); border: 0; background: none;
+  width: 18px; height: 18px; min-width: 0; padding: 0; border-radius: 4px;
+  place-items: center;
+}
+#list li:hover .drop { display: grid; }
+#list li .drop svg {
+  width: 11px; height: 11px; display: block;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+}
+#list li .drop:hover { color: var(--danger); background: var(--drop); }
+#list li.dragging { opacity: .45; }
+#list li.over-top { box-shadow: inset 0 2px 0 var(--accent); }
+#list li.over-bottom { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* language and theme, at the far right of the header */
+.prefs { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+/* the theme switch is just an icon, no button chrome */
+#theme-toggle {
+  border: 0; background: transparent; width: 26px; height: 26px; min-width: 0;
+  padding: 0; border-radius: 6px; display: grid; place-items: center;
+}
+#theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: var(--icon); stroke-width: 1.6; }
+#theme-toggle:hover { background: var(--ctl-hover); border-radius: 6px; }
+#theme-toggle:hover svg { stroke: var(--fg-strong); }
+.lang-label { color: var(--fg); }
+
