@@ -634,10 +634,13 @@ function render() {
       // name the format itself documents
       const fallback = imgURL(skin, skin.def.defaultart)
         || imgURL(skin, "artwork-default-1000-1000.png");
-      const wanted = e.next ? (state.nextCover || state.cover)
-                            : (showTrack ? state.cover : null);
+      // stopped or empty: no cover and no remembered one, only the skin's
+      // placeholder, which is what the device shows on its idle arm
+      const wanted = showTrack
+        ? (e.next ? (state.nextCover || state.cover) : state.cover)
+        : null;
       const ready = coverBlob(wanted);
-      const previous = e.next ? state.lastNextArt : state.lastArt;
+      const previous = showTrack ? (e.next ? state.lastNextArt : state.lastArt) : null;
       // with nothing on screen yet the url is still better than the default art
       const src = ready || previous || wanted;
       if (ready) { if (e.next) state.lastNextArt = ready; else state.lastArt = ready; }
