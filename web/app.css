@@ -178,11 +178,15 @@ button:active { background: var(--ctl-active); }
   width: var(--side);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 0 0 10px;      /* runs all the way to the separator */
+  gap: 0;                   /* the spacing is set per button below */
+  padding: 0 0 0 8px;
   box-sizing: border-box;
 }
-.side-actions > button:not(#clear-list) { flex: 0 0 auto; }
+.side-actions > button:not(#clear-list) {
+  flex: 0 0 100px;          /* 98 + 2 px, so the gaps read a little tighter */
+  width: 100px;
+  margin-right: 6px;
+}
 .clear-slot {
   flex: 0 0 26px;           /* exactly the button: no slack on either side */
   display: grid;
