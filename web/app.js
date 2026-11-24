@@ -429,6 +429,13 @@ function prefetchNeighbours() {
 
 // returns a decoded blob or null: drawing a plain http url would blank the
 // picture while the browser fetches it, so the caller keeps the previous art
+// the same fetch, but awaitable: a caller about to repaint can wait for the
+// picture instead of showing the previous one and swapping a moment later
+function coverReady(url) {
+  coverBlob(url);
+  return state.blobWait.get("cover " + url) || Promise.resolve();
+}
+
 function coverBlob(url) {
   if (!url) return null;
   const key = "cover " + url;
@@ -1261,6 +1268,7 @@ function attachAudio(a) {
 // starting it, "keep" leaves the playback state exactly as it was
 async function applyInfo(info, mode = "keep") {
   const play = mode === "play";
+  const wasPlaying = state.playingId;      // what the frame was showing
   state.count = info.count || 0;
   state.playingId = typeof info.playingId === "number" ? info.playingId : -1;
   state.index = typeof info.index === "number" ? info.index : -1;   // -1: that row is gone
@@ -1315,6 +1323,14 @@ async function applyInfo(info, mode = "keep") {
       if (a.readyState >= 1) start();
       else a.addEventListener("loadedmetadata", start, { once: true });
     }
+  }
+  // a row the prefetcher has not reached yet would paint the previous art and
+  // swap a moment later; waiting for the picture keeps the frame whole
+  if (state.cover && wasPlaying !== state.playingId) {
+    await Promise.race([
+      coverReady(state.cover),
+      new Promise((done) => setTimeout(done, 500)),
+    ]);
   }
   prefetchNeighbours();
   await refreshNext();        // the preview belongs to the track, not to a button
