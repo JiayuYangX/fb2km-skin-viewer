@@ -563,10 +563,10 @@ function render() {
 
   stage.style.width = (L.w * k) + "px";
   stage.style.height = (L.h * k) + "px";
-  // the canvas is painted with the skin's own background colour, so a layout
-  // without a full-size [rectangle] cannot fall back to the page colour
+  // the canvas is painted with the skin's own background colour; without one the
+  // device shows black, not the colour of whatever sits behind the view
   const base = (skin.def.fonts.backgroundcol || {}).c;
-  stage.style.background = base || "transparent";
+  stage.style.background = base || "#000";
   // build into a hidden layer and swap when it is painted: clearing the stage
   // first leaves one frame with nothing in it, which reads as a flash
   const buf = document.createElement("div");
@@ -634,8 +634,10 @@ function render() {
       if (raw.includes("[length]")) el.dataset.total = "1";
 
     } else if (e.t === "art") {
-      // a plain <img> is decoded but not painted here, so the picture is a
-      // background of a div; the probe only exists to fall back on a 404
+      // the artwork is the background of a div, not an <img>: a picture that
+      // fails to load then leaves an empty square rather than the browser's
+      // broken-image frame. An <img> paints perfectly well; the flicker this
+      // used to show was the frame swap, which render() now holds back.
       el = document.createElement("div");
       // the placeholder is whatever the skin names and nothing else: a skin that
       // names none shows an empty square, which is what the device does
