@@ -146,7 +146,8 @@ usually the skin lists no layout.
 - branches: `*if` / `*elseif` / `*else` / `*end`
 - button actions: `playnpause`, `skipback`, `skipnext`, `stop`, `play`,
   `pause`, `shuffle`, `repeat`, `stopaftercurrent`, `menu`, `onetrack`
-- a `[position]` with knob/bar pictures draws them and drops the built-in line
+- a `[position]` draws the knob and bar pictures the skin names; when the skin
+  names none, nothing is drawn
 
 ### Text styles
 

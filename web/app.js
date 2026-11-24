@@ -497,7 +497,15 @@ function refreshButtons() {
   syncChrome();
   for (const b of state.buttons) {
     b.pair = buttonPair(b.e, b.skin);
-    if (b.pair.normal) b.el.src = b.pair.normal;
+    // a key the skin gives no picture for stays invisible; asking the browser to
+    // load nothing would leave its broken-image frame on screen instead
+    if (b.pair.normal) {
+      b.el.src = b.pair.normal;
+      b.el.style.visibility = "";
+    } else {
+      b.el.removeAttribute("src");
+      b.el.style.visibility = "hidden";
+    }
   }
 }
 
@@ -569,7 +577,6 @@ function render() {
   state.posUI = null;
   $("status").textContent = L.w + "x" + L.h + "  " + els.length + " elements";
 
-  const dark = !/^#f|^rgb\(2[0-4]\d|^rgb\(25\d/.test(skin.def.colours.backgroundcol || "");
 
   for (const e of els) {
     let el = null;
@@ -630,10 +637,9 @@ function render() {
       // a plain <img> is decoded but not painted here, so the picture is a
       // background of a div; the probe only exists to fall back on a 404
       el = document.createElement("div");
-      // the skin declares this; only if it is missing do we fall back to the
-      // name the format itself documents
-      const fallback = imgURL(skin, skin.def.defaultart)
-        || imgURL(skin, "artwork-default-1000-1000.png");
+      // the placeholder is whatever the skin names and nothing else: a skin that
+      // names none shows an empty square, which is what the device does
+      const fallback = imgURL(skin, skin.def.defaultart);
       // stopped or empty: no cover and no remembered one, only the skin's
       // placeholder, which is what the device shows on its idle arm
       const wanted = showTrack
@@ -656,77 +662,75 @@ function render() {
       }
 
     } else if (e.t === "pos") {
-      el = document.createElement("div");
-      const mid = e.h / 2;
-      const barH = Math.max(2, 6 * k);
-      const d = Math.max(6, 26 * k);
+        el = document.createElement("div");
+        const mid = e.h / 2;
 
-      // a skin that ships its own slider pictures gets those; they are drawn as
-      // backgrounds because an <img> here is decoded but never painted
-      const paint = (node, file, size) => {
-        if (!file) return false;
-        const url = imgURL(skin, file);
-        if (!url) return false;
-        node.style.backgroundImage = 'url("' + url + '")';
-        node.style.backgroundSize = size;
-        node.style.backgroundRepeat = "no-repeat";
-        node.style.backgroundPosition = "center";
-        return true;
-      };
+        // a skin that ships its own slider pictures gets those, and a picture it
+        // lacks is simply not drawn: the device takes nothing from the built-in
+        // skin for this element
+        const posImage = (file) => (!file ? null : imgURL(skin, file));
+        const paint = (node, file, size) => {
+          const url = posImage(file);
+          if (!url) return false;
+          node.style.backgroundImage = 'url("' + url + '")';
+          node.style.backgroundSize = size;
+          node.style.backgroundRepeat = "no-repeat";
+          node.style.backgroundPosition = "center";
+          return true;
+        };
 
-      const track = document.createElement("div");
-      const useImages = paint(track, e.bar, "100% 100%");
-      track.style.position = "absolute";
-      track.style.left = "0";
-      track.style.right = "0";
-      track.style.top = useImages ? "0" : ((mid - 3) * k) + "px";
-      track.style.height = useImages ? (e.h * k) + "px" : barH + "px";
-      if (!useImages) {
-        track.style.background = dark ? "#464646" : "#b9b9b9";
-        track.style.borderRadius = barH + "px";
-      }
-      el.appendChild(track);
-
-      if (showTrack) {
-        const played = document.createElement("div");
-        played.style.position = "absolute";
-        played.style.left = "0";
-        played.style.top = useImages ? "0" : ((mid - 3) * k) + "px";
-        played.style.height = useImages ? (e.h * k) + "px" : barH + "px";
-        played.style.width = (state.pos * 100) + "%";
-        if (useImages) {
-          // the played piece is the same picture clipped to the elapsed width,
-          // not the whole picture squeezed into it (that looked faint)
-          played.style.backgroundImage = 'url("' + imgURL(skin, e.barHot || e.bar) + '")';
-          played.style.backgroundSize = (e.w * k) + "px " + (e.h * k) + "px";
-          played.style.backgroundPosition = "left center";
-          played.style.backgroundRepeat = "no-repeat";
+        const track = document.createElement("div");
+        const hasBar = paint(track, e.bar, "100% 100%");
+        if (!hasBar) {
+          el.style.pointerEvents = "auto";
+          el.style.cursor = "pointer";
+          el.style.touchAction = "none";
+          wireSeek(el);
         } else {
-          played.style.borderRadius = barH + "px";
-          played.style.background = dark ? "#fff" : "#000";
+          track.style.position = "absolute";
+          track.style.left = "0";
+          track.style.right = "0";
+          track.style.top = "0";
+          track.style.height = (e.h * k) + "px";
+          el.appendChild(track);
+
+          if (showTrack) {
+            const played = document.createElement("div");
+            played.style.position = "absolute";
+            played.style.left = "0";
+            played.style.top = "0";
+            played.style.height = (e.h * k) + "px";
+            played.style.width = (state.pos * 100) + "%";
+            // the played piece is the same picture clipped to the elapsed width,
+            // not the whole picture squeezed into it (that looked faint)
+            played.style.backgroundImage = 'url("' + posImage(e.barHot || e.bar) + '")';
+            played.style.backgroundSize = (e.w * k) + "px " + (e.h * k) + "px";
+            played.style.backgroundPosition = "left center";
+            played.style.backgroundRepeat = "no-repeat";
+            el.appendChild(played);
+
+            const knob = document.createElement("div");
+            const knobSize = e.knob ? e.h * k : 0;
+            if (paint(knob, e.knob, "contain")) {
+              knob.style.position = "absolute";
+              knob.style.top = ((mid * k) - (knobSize / 2)) + "px";
+              knob.style.left = "calc(" + (state.pos * 100) + "% - " + (knobSize / 2) + "px)";
+              knob.style.width = knobSize + "px";
+              knob.style.height = knobSize + "px";
+              el.appendChild(knob);
+              state.posUI = { played, knob, d: knobSize };
+            } else {
+              state.posUI = { played, knob: null, d: 0 };
+            }
+
+            el.style.pointerEvents = "auto";
+            el.style.cursor = "pointer";
+            el.style.touchAction = "none";
+            wireSeek(el);
+          }
         }
 
-        const knob = document.createElement("div");
-        const knobSize = e.knob ? e.h * k : d;
-        knob.style.position = "absolute";
-        knob.style.top = ((mid * k) - knobSize / 2) + "px";
-        knob.style.left = "calc(" + (state.pos * 100) + "% - " + (knobSize / 2) + "px)";
-        knob.style.width = knobSize + "px";
-        knob.style.height = knobSize + "px";
-        if (!paint(knob, e.knob, "contain")) {
-          knob.style.borderRadius = "50%";
-          knob.style.background = dark ? "#fff" : "#000";
-        }
-
-        el.append(played, knob);
-        state.posUI = { played, knob, d: knobSize };
-        el.style.pointerEvents = "auto";
-        el.style.cursor = "pointer";
-        el.style.touchAction = "none";
-        wireSeek(el);
-      }
-
-    } else if (e.t === "btn" || e.t === "image") {
+      } else if (e.t === "btn" || e.t === "image") {
       // the menu key is drawn like the device shows it; pressing it does nothing
       el = document.createElement("img");
       el.draggable = false;                                 // no drag ghosts
@@ -735,13 +739,8 @@ function render() {
       // the last one that worked, or hide the element entirely
       el.addEventListener("load", () => { if (el.getAttribute("src")) el.dataset.prev = el.getAttribute("src"); });
       el.addEventListener("error", () => {
-        // a missing picture comes from the built in skin, as the format says
-        const cur = el.getAttribute("src") || "";
-        if (cur && !cur.includes("/default/")) {
-          const file = cur.split("/").pop().split("?")[0];
-          el.src = "/default/" + (dark ? "black" : "white") + "/" + file;
-          return;
-        }
+        // a picture the skin lacks is not drawn; only the skindef images are
+        // taken from the built-in skin, never the layout ones
         const prev = el.dataset.prev;
         if (prev && el.getAttribute("src") !== prev) el.src = prev;
         else el.style.visibility = "hidden";

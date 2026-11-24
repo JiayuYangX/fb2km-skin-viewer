@@ -125,7 +125,7 @@ fbsv.exe <目录> <列表.m3u8>       同时加载播放列表
 - 元素：`rect`、`line`、`label`、`image`、`art`、`pos`、`btn`
 - 条件分支：`*if` / `*elseif` / `*else` / `*end`
 - 按钮动作：`playnpause`、`skipback`、`skipnext`、`stop`、`play`、`pause`、`shuffle`、`repeat`、`stopaftercurrent`、`menu`、`onetrack`
-- `[position]` 自带 knob/bar 图片时使用图片，不再绘制内置线条
+- `[position]` 使用皮肤指定的 knob/bar 图片；皮肤未指定时不绘制
 
 ### 文本样式
 

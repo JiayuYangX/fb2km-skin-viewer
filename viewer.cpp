@@ -1372,18 +1372,12 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
             respond(c, "404 Not Found", "text/plain", "no such skin");
         } else {
             string body = load_file_safe(hit->files, hit->root, file);
-            if (body.empty()) {
-                bool image = hash_ext(ext_of(file)) != 0;
-                // a picture the skin lacks comes from the built in defaults
-                const auto &pkg = hash_ext(ext_of(file)) ? g_default_black : g_default_black;
-                auto alt = pkg.find(lower(file));
-                if (image && alt != pkg.end())
-                    respond(c, "200 OK", mime_of(file), alt->second, "", true);
-                else
-                    respond(c, "404 Not Found", "text/plain", "not in this skin");
-            } else {
+            // a file the skin does not contain is simply missing: the device takes
+            // nothing from the built in skin for the elements of a layout
+            if (body.empty())
+                respond(c, "404 Not Found", "text/plain", "not in this skin");
+            else
                 respond(c, "200 OK", mime_of(file), body, "", hash_ext(ext_of(file)) != 0);
-            }
         }
     } else if (route.rfind("/favicon.ico", 0) == 0) {
         respond(c, "200 OK", "image/x-icon", read_resource(L"APP_ICON"), "", true);
@@ -1391,13 +1385,6 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         respond(c, "200 OK", "image/png", read_resource(L"APP_ICON_PNG"), "", true);
     } else if (route.rfind("/brand.png", 0) == 0) {
         respond(c, "200 OK", "image/png", read_resource(L"BRAND_PNG"), "", true);
-    } else if (route.rfind("/default/", 0) == 0) {
-        bool white = route.rfind("/default/white/", 0) == 0;
-        string file = lower(route.substr(15));
-        const auto &pkg = white ? g_default_white : g_default_black;
-        auto it = pkg.find(file);
-        if (it == pkg.end()) respond(c, "404 Not Found", "text/plain", "not in the default skin");
-        else respond(c, "200 OK", mime_of(file), it->second, "", hash_ext(ext_of(file)) != 0);
     } else if (route.rfind("/api/open-skin", 0) == 0) {
         string path = query_value(target, "path");
         string err;
@@ -1525,18 +1512,12 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
             respond(c, "404 Not Found", "text/plain", "no such skin");
         } else {
             string body = load_file_safe(hit->files, hit->root, file);
-            if (body.empty()) {
-                bool image = hash_ext(ext_of(file)) != 0;
-                // a picture the skin lacks comes from the built in defaults
-                const auto &pkg = hash_ext(ext_of(file)) ? g_default_black : g_default_black;
-                auto alt = pkg.find(lower(file));
-                if (image && alt != pkg.end())
-                    respond(c, "200 OK", mime_of(file), alt->second, "", true);
-                else
-                    respond(c, "404 Not Found", "text/plain", "not in this skin");
-            } else {
+            // a file the skin does not contain is simply missing: the device takes
+            // nothing from the built in skin for the elements of a layout
+            if (body.empty())
+                respond(c, "404 Not Found", "text/plain", "not in this skin");
+            else
                 respond(c, "200 OK", mime_of(file), body, "", hash_ext(ext_of(file)) != 0);
-            }
         }
     } else if (route.rfind("/favicon.ico", 0) == 0) {
         respond(c, "200 OK", "image/x-icon", read_resource(L"APP_ICON"), "", true);
@@ -1544,13 +1525,6 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         respond(c, "200 OK", "image/png", read_resource(L"APP_ICON_PNG"), "", true);
     } else if (route.rfind("/brand.png", 0) == 0) {
         respond(c, "200 OK", "image/png", read_resource(L"BRAND_PNG"), "", true);
-    } else if (route.rfind("/default/", 0) == 0) {
-        bool white = route.rfind("/default/white/", 0) == 0;
-        string file = lower(route.substr(15));
-        const auto &pkg = white ? g_default_white : g_default_black;
-        auto it = pkg.find(file);
-        if (it == pkg.end()) respond(c, "404 Not Found", "text/plain", "not in the default skin");
-        else respond(c, "200 OK", mime_of(file), it->second, "", hash_ext(ext_of(file)) != 0);
     } else if (route.rfind("/api/open-skin", 0) == 0) {
         string path = query_value(target, "path");
         string err;
