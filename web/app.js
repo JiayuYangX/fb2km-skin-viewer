@@ -1156,22 +1156,21 @@ function manualPrev() {
   return idAt((fromPos() - 1 + n) % n);
 }
 
-function toggleShuffle() {
-  state.shuffle = !state.shuffle;
+// the one place the playing mode changes: the skin's buttons and the toolbar
+// both come through here, so every control ends up in the same state
+function setModes(next) {
+  if ("shuffle" in next) state.shuffle = !!next.shuffle;
+  if ("onetrack" in next) state.onetrack = !!next.onetrack;
+  if ("repeatAll" in next) state.repeatAll = !!next.repeatAll;
+  if ("stopAfter" in next) state.stopAfter = !!next.stopAfter;
+  if (state.onetrack) state.shuffle = false;   // the app keeps them exclusive
   if (state.shuffle) state.onetrack = false;
-  modesChanged();
+  return modesChanged();
 }
 
-function toggleOneTrack() {
-  state.onetrack = !state.onetrack;
-  if (state.onetrack) state.shuffle = false;
-  modesChanged();
-}
-
-function toggleRepeat() {
-  state.repeatAll = !state.repeatAll;
-  modesChanged();
-}
+function toggleShuffle() { return setModes({ shuffle: !state.shuffle }); }
+function toggleOneTrack() { return setModes({ onetrack: !state.onetrack }); }
+function toggleRepeat() { return setModes({ repeatAll: !state.repeatAll }); }
 
 function clock(sec) {
   if (!isFinite(sec)) sec = 0;
@@ -1807,17 +1806,12 @@ function wirePrefs() {
 
 function wireModes() {
   const ord = $("order");
-  if (ord) ord.addEventListener("change", () => {
-    state.shuffle = ord.value === "shuffle";
-    state.onetrack = ord.value === "one";
-    syncChrome();
-    refreshButtons();      // the skin's own mode buttons follow the select
-    highlightRow();
-  });
+  if (ord) ord.addEventListener("change", () =>
+    setModes({ onetrack: ord.value === "one", shuffle: ord.value === "shuffle" }));
   const rep = $("mode-repeat");
-  if (rep) rep.addEventListener("change", () => { state.repeatAll = rep.checked; refreshButtons(); });
+  if (rep) rep.addEventListener("change", () => setModes({ repeatAll: rep.checked }));
   const stop = $("mode-stop");
-  if (stop) stop.addEventListener("change", () => { state.stopAfter = stop.checked; });
+  if (stop) stop.addEventListener("change", () => setModes({ stopAfter: stop.checked }));
 }
 
 function wireChrome() {
