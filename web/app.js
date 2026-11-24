@@ -763,6 +763,7 @@ function render() {
 
   stage.appendChild(buf);
   requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
     if (state.renderToken !== token) { buf.remove(); return; }   // superseded
     buf.style.opacity = "1";
     buf.style.pointerEvents = "auto";
@@ -771,6 +772,7 @@ function render() {
     // the first pass may still see the fallback font: one more frame settles it
     requestAnimationFrame(() => { if (state.lastBuf === buf) fitLabels(buf); });
     [...stage.children].forEach((c) => { if (c !== buf) c.remove(); });
+    });
   });
 }
 
