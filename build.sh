@@ -40,7 +40,7 @@ windres page.rc -O coff -o build/page_res.o
 echo "  compile"
 g++ -std=c++20 -O2 -DTAGLIB_STATIC -static -o "$BIN" \
     viewer.cpp build/page_res.o \
-    -lws2_32 -lshell32 -lole32 -luuid -lz \
+    -lws2_32 -lshell32 -lole32 -luuid -lz -lwindowscodecs \
     /ucrt64/lib/libtag.a /ucrt64/lib/libz.a
 
 if [[ -z "$dest" ]]; then

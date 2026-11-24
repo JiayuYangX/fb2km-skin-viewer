@@ -18,6 +18,7 @@
 #include <objbase.h>
 #include <shldisp.h>
 #include <servprov.h>
+#include <wincodec.h>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
@@ -269,6 +270,79 @@ static std::vector<fs::path> read_playlist(const fs::path &list) {
 
 
 // -------------------------------------------------------------------- tags --
+// Artwork only ever lands in a few hundred pixels on screen, but a scanned cover
+// can be eight megabytes and four thousand pixels wide; the browser then paints
+// it over several frames. Shrink it once, on the way out.
+static std::string shrink_jpeg(const std::vector<uint8_t> &in, int maxSide) {
+    std::string out;
+    if (in.empty()) return out;
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    IWICImagingFactory *fac = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&fac))))
+        return out;
+    IStream *src = nullptr;
+    if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &src))) {
+        ULONG wrote = 0;
+        src->Write(in.data(), (ULONG)in.size(), &wrote);
+        LARGE_INTEGER zero{};
+        src->Seek(zero, STREAM_SEEK_SET, nullptr);
+        IWICBitmapDecoder *dec = nullptr;
+        if (SUCCEEDED(fac->CreateDecoderFromStream(src, nullptr, WICDecodeMetadataCacheOnLoad, &dec))) {
+            IWICBitmapFrameDecode *frame = nullptr;
+            if (SUCCEEDED(dec->GetFrame(0, &frame))) {
+                UINT w = 0, h = 0;
+                frame->GetSize(&w, &h);
+                double k = (w || h) ? std::min(1.0, (double)maxSide / (double)std::max(w, h)) : 1.0;
+                UINT tw = (UINT)std::max(1.0, w * k), th = (UINT)std::max(1.0, h * k);
+                IWICBitmapScaler *scaler = nullptr;
+                if (k < 0.999 && SUCCEEDED(fac->CreateBitmapScaler(&scaler)) &&
+                    SUCCEEDED(scaler->Initialize(frame, tw, th, WICBitmapInterpolationModeFant))) {
+                    IStream *dst = nullptr;
+                    if (SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &dst))) {
+                        IWICBitmapEncoder *enc = nullptr;
+                        if (SUCCEEDED(fac->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &enc)) &&
+                            SUCCEEDED(enc->Initialize(dst, WICBitmapEncoderNoCache))) {
+                            IWICBitmapFrameEncode *ef = nullptr;
+                            IPropertyBag2 *props = nullptr;
+                            if (SUCCEEDED(enc->CreateNewFrame(&ef, &props))) {
+                                ef->Initialize(props);
+                                ef->SetSize(tw, th);
+                                WICPixelFormatGUID fmt = GUID_WICPixelFormat24bppBGR;
+                                ef->SetPixelFormat(&fmt);
+                                if (SUCCEEDED(ef->WriteSource(scaler, nullptr)) &&
+                                    SUCCEEDED(ef->Commit()) && SUCCEEDED(enc->Commit())) {
+                                    STATSTG st{};
+                                    if (SUCCEEDED(dst->Stat(&st, STATFLAG_NONAME)) && st.cbSize.QuadPart) {
+                                        HGLOBAL hg = nullptr;
+                                        if (SUCCEEDED(GetHGlobalFromStream(dst, &hg)) && hg) {
+                                            void *mem = GlobalLock(hg);
+                                            if (mem) {
+                                                out.assign((const char *)mem, (size_t)st.cbSize.QuadPart);
+                                                GlobalUnlock(hg);
+                                            }
+                                        }
+                                    }
+                                }
+                                ef->Release();
+                                if (props) props->Release();
+                            }
+                            enc->Release();
+                        }
+                        dst->Release();
+                    }
+                    scaler->Release();
+                }
+                frame->Release();
+            }
+            dec->Release();
+        }
+        src->Release();
+    }
+    fac->Release();
+    return out;
+}
+
 struct Media {
     bool ok = false;
     string container, title, artist, album, year, composer;
@@ -549,7 +623,8 @@ struct Session {
     int playingId = -1;               // what the element is playing, by identity
     fs::path playingPath;             // kept even when its row is deleted
     int anchor = -1;                  // position of a deleted, still playing row
-    std::map<int, Media> cache;       // tags by track id
+    std::map<int, Media> cache;
+    std::map<int, std::string> thumbs;       // tags by track id
 
     int indexOf(int id) const {
         for (size_t i = 0; i < tracks.size(); i++)
@@ -621,6 +696,17 @@ struct Session {
         // then starts the first one without picking a row by hand
         if (playingId < 0) playingId = id;
         return id;
+    }
+
+    // the shrunk artwork, built once per track
+    const std::string &thumb_of(int id) {
+        auto it = thumbs.find(id);
+        if (it != thumbs.end()) return it->second;
+        const Media &m = meta_of(id);
+        std::string t;
+        // small art is fine as it is; only the heavy files are worth a pass
+        if (m.cover.size() > 160 * 1024) t = shrink_jpeg(m.cover, 640);
+        return thumbs.emplace(id, std::move(t)).first->second;
     }
 
     const Media &meta_of(int id) {
@@ -1614,9 +1700,14 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         if (byId > 0) want = byId;
         const Media &cm = sess.meta_of(want);
         // a track's artwork never changes, so it can be cached like the skin
-        if (!cm.cover.empty())
-            respond(c, "200 OK", cm.cover_mime.empty() ? "image/jpeg" : cm.cover_mime,
-                    string((const char *)cm.cover.data(), cm.cover.size()), "", true);
+        if (!cm.cover.empty()) {
+            const std::string &small = sess.thumb_of(want);
+            if (!small.empty())
+                respond(c, "200 OK", "image/jpeg", small, "", true);
+            else
+                respond(c, "200 OK", cm.cover_mime.empty() ? "image/jpeg" : cm.cover_mime,
+                        string((const char *)cm.cover.data(), cm.cover.size()), "", true);
+        }
         else respond(c, "404 Not Found", "text/plain", "no cover");
     } else if (route.rfind("/api/jump", 0) == 0) {
         int want = (int)std::strtol(query_value(target, "id").c_str(), nullptr, 10);
