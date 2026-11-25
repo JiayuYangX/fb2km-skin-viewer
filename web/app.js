@@ -452,6 +452,12 @@ function parseArm(lines, def, mode, overrides) {
       if (b && (which === "main" || which === "next")) {
         els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3], next: which === "next" });
       } else if (b && (which === "mainback" || which === "mainmirrored")) {
+        if (!def.oldFormat) {
+          // a format 2 skin: the 2.x app drops this type, so the preview does too
+          (state.unknown || (state.unknown = new Set())).add("[albumart] " + which);
+          i += 3;
+          continue;
+        }
         // The old designer's two extra types. The 2.x app drops both, so these are
         // only here for skins written against 1.x: mainback covers its box, and
         // mainmirrored is the picture squashed into a strip and flipped over.
@@ -2519,6 +2525,9 @@ async function loadSkin() {
     } catch (e) { continue; }
     const entry = { def: parseSkindef(text), layouts: {},
                     base: base.startsWith("/") ? base : "./" + base };
+    // the old designer's entry name is the only marker of a 1.x skin, and the two
+    // extra artwork types below are its feature
+    entry.def.oldFormat = def === "skindef.skindef";
     const decls = [...text.matchAll(/^skin:\s*(\d+)x(\d+)[^\s]*\s+(\S+\.txt)\s*$/gm)]
       .map((m) => ({ w: +m[1], h: +m[2], file: m[3] }));
     const names = decls.length
