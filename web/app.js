@@ -1641,6 +1641,12 @@ function attachAudio(a) {
 async function applyInfo(info, mode = "keep") {
   const play = mode === "play";
   const a = $("audio");
+  // the answer is the state: take the ids before anything reads them, or the row
+  // highlight and the "is the element already holding this track" test both lie
+  state.count = info.count || 0;
+  state.playingId = typeof info.playingId === "number" ? info.playingId : -1;
+  state.index = typeof info.index === "number" ? info.index : -1;   // -1: that row is gone
+  state.slot = typeof info.slot === "number" ? info.slot : -1;      // where a jump starts
   const keep = a && a.getAttribute("src") && a.dataset.trackId === String(state.playingId);
 
   if (!info.audio) {
