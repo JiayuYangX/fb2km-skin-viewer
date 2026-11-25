@@ -1709,8 +1709,11 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         string err;
         const bool ok = apply_inputs(sess, skin.empty() ? fs::path() : fs::path(wide(skin)),
                                      inputs, err);
+        // the answer names the skin that is now open, so the launcher can put it
+        // in the address it opens: ?skin=<name> is what the page reads first
+        const string label = sess.sources.empty() ? "" : sess.sources[sess.active].label;
         respond(c, "200 OK", "application/json; charset=utf-8",
-                ok ? "{\"ok\":true}"
+                ok ? "{\"ok\":true,\"skin\":\"" + json_escape(label) + "\"}"
                    : "{\"ok\":false,\"error\":\"" + json_escape(err) + "\"}");
     } else if (route.rfind("/api/open-skin", 0) == 0) {
         string path = query_value(target, "path");
@@ -2390,9 +2393,23 @@ int main() {
             if (!joined.empty()) query += "&audio=" + query_escape(joined);
             const string answer = http_call(target.port, "POST", "/api/forward?" + query);
             if (answer.find("\"ok\":true") != string::npos) {
+                // the address names the skin that was just opened, so the new tab
+                // shows it without having to guess
+                string open = uiQuery;
+                const size_t at = answer.find("\"skin\":\"");
+                if (at != string::npos) {
+                    const size_t from = at + 8;
+                    const size_t to = answer.find('"', from);
+                    if (to != string::npos) {
+                        const string name = answer.substr(from, to - from);
+                        if (!name.empty()) open = "skin=" + query_escape(name) +
+                                                   (open.empty() ? "" : "&" + open);
+                    }
+                }
                 const string url = "http://127.0.0.1:" + std::to_string(target.port) + "/" +
-                                   (uiQuery.empty() ? "" : "?" + uiQuery);
-                printf("handed to the instance already on port %d\n", target.port);
+                                   (open.empty() ? "" : "?" + open);
+                printf("handed to the instance on port %d\n", target.port);
+                printf("  open %s\n", url.c_str());
                 if (openBrowser) launch_browser(wide(url));
                 return 0;
             }
