@@ -54,7 +54,7 @@
   --rail: #3a3a42; --rail-on: #ffffff;
   --icon-solid: #ffffff;      /* pure white, like the transport glyphs */
   --drop: #4a4a57;
-  --side: 254px;
+  --side: 284px;
   --bar: 36px;
 }
 :root[data-theme="light"] {
@@ -188,9 +188,8 @@ button:active { background: var(--ctl-active); }
   margin-right: 6px;
 }
 .clear-slot {
-  flex: 0 0 26px;           /* exactly the button: no slack on either side */
-  display: grid;
-  place-items: center;
+  flex: 0 0 auto;
+  display: block;           /* the button keeps its own height, like its neighbours */
 }
 .side-actions button { flex: 1 1 0; min-width: 0; white-space: nowrap; }
 .sep { flex: 0 0 1px; width: 1px; height: 20px; min-height: 20px; background: var(--line); }
@@ -200,19 +199,12 @@ button:active { background: var(--ctl-active); }
 #player > *:not(.sep) { min-height: var(--bar); }
 
 /* the clear button is a square version of the two buttons beside it */
+/* the same box as the two buttons beside it, wide enough for 清空 and Clear */
 #clear-list {
-  flex: none;
-  width: 26px; height: 26px; min-width: 26px;
-  padding: 0;
-  display: grid; place-items: center;
-}
-#clear-list svg {
-  width: 17px; height: 17px;
-  fill: none;
-  stroke: var(--icon-solid);           /* pure white or black, no hover shift */
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  flex: 0 0 56px;
+  width: 56px;
+  min-width: 56px;
+  margin-right: 8px;
 }
 .transport { flex: 1 1 320px; display: flex; align-items: center; gap: 6px; padding: 0 10px; min-width: 0; }
 .transport #seek { flex: 1 1 auto; min-width: 60px; }
@@ -316,8 +308,10 @@ button:active { background: var(--ctl-active); }
 main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 #sidebar {
-  width: var(--side);
-  flex: 0 0 var(--side);
+  /* one pixel wider than the bar's block, so its border sits exactly where the
+     bar's divider does */
+  width: calc(var(--side) + 1px);
+  flex: 0 0 calc(var(--side) + 1px);
   border-right: 1px solid var(--line);
   background: var(--panel2);
   overflow-y: auto;
@@ -364,6 +358,15 @@ main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overf
   user-select: none;
 }
 #stage > *, #stage .buf > * { position: absolute; }
+#stage .simbar { display: flex; align-items: center; justify-content: space-between;
+  position: absolute; left: 0; top: 0; width: 100%; box-sizing: border-box;
+  font-family: "Roboto", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; }
+#stage .simbar .simicons { display: flex; align-items: center; }
+#stage .simbar svg { display: block; height: 100%; width: auto; }
+#stage .simbar svg:first-child { height: 100%; }
+#stage .simbar > * { pointer-events: none; }
+
+
 #stage img { -webkit-user-drag: none; }   /* clicks still belong to the buttons */
 
 .lbl {
@@ -408,13 +411,24 @@ main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overf
 
 /* language and theme, at the far right of the header */
 .prefs { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+#devicebar { flex: 0 0 auto; display: flex; align-items: center; gap: 16px;
+  min-height: var(--bar); padding: 0 16px; border-top: 1px solid var(--line);
+  color: var(--fg); background: var(--panel2); }
+#devicebar label { display: flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; }
+#devicebar input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; }
+#devicebar input[type=number] { width: 64px; height: 22px; padding: 0 6px; color: var(--fg);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  font: inherit; text-align: center; }
+#devicebar input[type=number]:disabled { color: var(--muted); background: transparent; }
+#devicebar #status-h { width: 56px; }
+#devicebar .times { color: #8a8a95; }
 /* the theme switch is just an icon, no button chrome */
 #theme-toggle {
   border: 0; background: transparent; width: 26px; height: 26px; min-width: 0;
   padding: 0; border-radius: 6px; display: grid; place-items: center;
 }
-#theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: var(--icon); stroke-width: 1.6; }
+#theme-toggle svg { width: 16px; height: 16px; fill: var(--icon); }
 #theme-toggle:hover { background: var(--ctl-hover); border-radius: 6px; }
-#theme-toggle:hover svg { stroke: var(--fg-strong); }
+#theme-toggle:hover svg { fill: var(--fg-strong); }
 .lang-label { color: var(--fg); }
 

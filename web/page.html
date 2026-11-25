@@ -32,9 +32,7 @@
       <button id="add-audio" title="append to the list">上传音频文件</button>
       <button id="open-list" title="replace the list">打开播放列表</button>
       <span class="clear-slot">
-        <button id="clear-list" title="clear the list">
-          <svg viewBox="0 0 24 24"><path d="M3.5 6.5h17M9.5 3.5h5M6.5 6.5l.9 14h9.2l.9-14"/></svg>
-        </button>
+        <button id="clear-list" title="clear the list">清空</button>
       </span>
       <input id="pick-audio-add" type="file" multiple accept="audio/*" hidden>
       <input id="pick-audio-list" type="file" accept=".m3u,.m3u8,audio/*" hidden>
@@ -42,16 +40,16 @@
     <span class="sep"></span>
     <div class="transport">
       <button id="btn-prev" title="previous">
-        <svg viewBox="0 0 24 24"><path d="M7 5h2.1v14H7z"/><path d="M19 5v14L9.6 12z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M9.195 18.44c1.25.714 2.805-.189 2.805-1.629v-2.34l6.945 3.968c1.25.715 2.805-.188 2.805-1.628V8.69c0-1.44-1.555-2.343-2.805-1.628L12 11.029v-2.34c0-1.44-1.555-2.343-2.805-1.628l-7.108 4.061c-1.26.72-1.26 2.536 0 3.256l7.108 4.061Z"/></svg>
       </button>
       <button id="btn-play" title="play or pause">
-        <svg viewBox="0 0 24 24"><path id="play-shape" d="M8 5v14l11-7z"/></svg>
+        <svg viewBox="0 0 24 24"><path id="play-shape" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z"/></svg>
       </button>
       <button id="btn-next" title="next">
-        <svg viewBox="0 0 24 24"><path d="M14.9 5H17v14h-2.1z"/><path d="M5 5v14l9.4-7z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M5.055 7.06C3.805 6.347 2.25 7.25 2.25 8.69v8.122c0 1.44 1.555 2.343 2.805 1.628L12 14.471v2.34c0 1.44 1.555 2.343 2.805 1.628l7.108-4.061c1.26-.72 1.26-2.536 0-3.256l-7.108-4.061C13.555 6.346 12 7.249 12 8.689v2.34L5.055 7.061Z"/></svg>
       </button>
       <button id="btn-stop" title="stop">
-        <svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M4.5 7.5a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9Z"/></svg>
       </button>
       <input id="seek" class="idle" type="range" min="0" max="1000" value="0" step="1" disabled>
       <span class="time"><span id="cur">--:--</span> / <span id="dur">--:--</span></span>
@@ -76,6 +74,12 @@
     </aside>
     <section id="right">
       <div id="wrap"><div id="stage"></div></div>
+      <footer id="devicebar">
+        <label class="check"><input type="checkbox" id="device-follow"> <span id="follow-label">跟随布局尺寸</span></label>
+        <label class="dims"><input type="number" id="device-w" min="120" max="8000" step="1"> <span class="times">×</span> <input type="number" id="device-h" min="120" max="8000" step="1"></label>
+        <label class="check"><input type="checkbox" id="sim-status"> <span id="sim-label">状态栏</span></label>
+        <label class="dims"><input type="number" id="status-h" min="8" max="600" step="1" title="状态栏高度"></label>
+      </footer>
     </section>
   </main>
 

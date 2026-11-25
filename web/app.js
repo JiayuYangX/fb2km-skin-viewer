@@ -14,28 +14,6 @@ function fillLayouts() {
   if (state.layout) sel.value = state.layout;
 }
 
-function fillSkins() {
-  const sel = $("skin");
-  const names = [...skins.keys()];
-  sel.innerHTML = "";
-  for (const name of names) {
-    const o = document.createElement("option");
-    o.value = name;
-    const e = skins.get(name);
-    o.textContent = (e && e.def && e.def.name) || name;
-    sel.appendChild(o);
-  }
-  // the element only ever mirrors state.skin; it is never read back
-  if (!skins.has(state.skin)) state.skin = names[0] || null;
-  if (state.skin) sel.value = state.skin;
-
-  const entry = skins.get(state.skin);
-  const def = (entry && entry.def) || {};
-  sel.title = (state.skinRoot ? "folder " + state.skinRoot : "")
-            + (def.version ? " · version " + def.version : "");
-  fillLayouts();
-  return names.length;
-}
 
 "use strict";
 
@@ -52,7 +30,12 @@ const state = {
   entries: [], seeking: false, fields: {}, nextFields: {}, stopAfter: false,
   pos: 0, cover: null, nextCover: null, index: 0, count: 0, fingerprint: "",
   buttons: [], posUI: null,
-  gesture: 0, pressGesture: -1, longGesture: -1,   // which press is which
+  pressedKey: null,          // the action of the key being held down right now
+  artEl: null, artNextEl: null,   // the two [albumart] boxes of the current frame
+  simStatus: false,          // draw the phone's status bar over the skin
+  deviceFollow: true,        // the device is as big as the subskin unless told otherwise
+  deviceW: 0, deviceH: 0,    // otherwise the size typed into the bottom bar
+  statusBarH: 0,             // the bar height typed in, when not following the layout
 };
 
 const skins = new Map();          // name -> { def, layouts, base }
@@ -101,15 +84,45 @@ function fieldSet(source) {
 
 // a label keeps one line: it shrinks to a floor, then ellipsizes. The floor is
 // relative to the size the skin declared, so it behaves the same on every canvas
-const LABEL_FLOOR = 0.58;
+// The device shrinks a label down to about 0.52 of its box height and cuts the
+// text below that; the same measurement on our font puts the floor here.
+const LABEL_FLOOR = 0.52 / 0.81;
 const fitCanvas = document.createElement("canvas").getContext("2d");
 
 // the text is measured on a canvas: once a label is ellipsized its laid-out
 // width is the clipped one, so the DOM cannot tell us it is still too wide
-function textWidth(el, size) {
+// how light a skin's background is decides whether the bar reads dark or light
+function luminanceOf(colour) {
+  const text = String(colour || "").trim();
+  let r = 0, g = 0, b = 0;
+  const hex = /^#?([0-9a-f]{6})$/i.exec(text);
+  const short = /^#?([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(text);
+  const rgb = /^rgba?\(([^)]+)\)$/i.exec(text);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    r = (n >> 16) & 255; g = (n >> 8) & 255; b = n & 255;
+  } else if (short) {
+    r = parseInt(short[1] + short[1], 16);
+    g = parseInt(short[2] + short[2], 16);
+    b = parseInt(short[3] + short[3], 16);
+  } else if (rgb) {
+    const p = rgb[1].split(",").map((v) => parseFloat(v));
+    r = p[0] || 0; g = p[1] || 0; b = p[2] || 0;
+  } else {
+    return 0;                       // unknown: treat as dark, so the bar goes light
+  }
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function wallClock() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function textWidth(el, size, text) {
   const cs = getComputedStyle(el);
   fitCanvas.font = cs.fontStyle + " " + cs.fontWeight + " " + size + "px " + cs.fontFamily;
-  return fitCanvas.measureText(el.textContent || "").width;
+  return fitCanvas.measureText(text === undefined ? (el.textContent || "") : text).width;
 }
 
 // the current frame is the only thing worth refitting
@@ -129,6 +142,23 @@ function fitLabels(root) {
       size = next;
     }
     if (size < base - 0.01) el.style.fontSize = size + "px";
+    // the device shrinks only so far and then cuts the text, marking the cut
+    // with two dots; cutting flattens the label, which only happens to text that
+    // cannot fit even at the smallest size
+    const full = el.dataset.text || "";
+    if (full) {
+      el.style.textOverflow = "clip";   // the dots are ours, not the browser's
+      if (textWidth(el, size, full) > box * 0.98) {
+        let cut = full;
+        while (cut.length > 1 && textWidth(el, size, cut + "..") > box * 0.98) cut = cut.slice(0, -1);
+        el.textContent = cut + "..";
+        // the canvas and the layout can disagree by a hair: let the box settle it
+        while (cut.length > 1 && el.scrollWidth > el.clientWidth) {
+          cut = cut.slice(0, -1);
+          el.textContent = cut + "..";
+        }
+      }
+    }
   }
 }
 
@@ -439,8 +469,14 @@ function coverBlob(url) {
       .then((r) => (r.ok ? r.blob() : null))
       .then((b) => {
         if (!b) return;
-        state.blobs.set(key, URL.createObjectURL(b));
-        if (state.skinsReady) render();
+        const src = URL.createObjectURL(b);
+        state.blobs.set(key, src);
+        // the picture only has to reach a box that is showing it; a cover nothing
+        // on screen uses waits in the cache instead of redrawing the stage, which
+        // used to replace every key while the list was being prefetched
+        const box = state.cover === url ? state.artEl
+                  : state.nextCover === url ? state.artNextEl : null;
+        if (box) box.style.backgroundImage = 'url("' + src + '")';
       })
       .catch(() => {});
     state.blobWait.set(key, wait);
@@ -497,10 +533,14 @@ function refreshButtons() {
   syncChrome();
   for (const b of state.buttons) {
     b.pair = buttonPair(b.e, b.skin);
+    // a key that is being held keeps its pressed picture: the render that
+    // rebuilt it must not quietly show the resting one
+    const held = state.pressedKey === b.e.action && b.pair.hot;
+    const src = held ? b.pair.hot : b.pair.normal;
     // a key the skin gives no picture for stays invisible; asking the browser to
     // load nothing would leave its broken-image frame on screen instead
-    if (b.pair.normal) {
-      b.el.src = b.pair.normal;
+    if (src) {
+      b.el.src = src;
       b.el.style.visibility = "";
     } else {
       b.el.removeAttribute("src");
@@ -521,8 +561,9 @@ function paintPosition() {
   const pct = (state.pos * 100).toFixed(2);
   const ui = state.posUI;
   if (ui) {
-    ui.played.style.width = pct + "%";
-    ui.knob.style.left = "calc(" + pct + "% - " + (ui.d / 2) + "px)";
+    if (ui.played) ui.played.style.width = pct + "%";
+    // the marker travels the free distance, not past the ends of the strip
+    if (ui.knob) ui.knob.style.left = Math.round(state.pos * ui.travel) + "px";
   }
   const seek = $("seek");
   if (seek) {
@@ -559,19 +600,53 @@ function render() {
   const availW = Math.max(0, box.clientWidth - 32);
   const availH = Math.max(0, box.clientHeight - 32);
   if (availW < 80 || availH < 80) { requestAnimationFrame(render); return; }
-  const k = Math.min(availW / L.w, availH / L.h);
+  // The canvas is the device screen; the skin is drawn into what the status bar
+  // leaves and is stretched over it, exactly as the phone does. The device is
+  // the subskin's own size unless the bottom bar says otherwise.
+  const skinW = L.w, skinH = L.h;
+  const follow = state.deviceFollow;
+  const deviceW = follow ? skinW : Math.max(120, state.deviceW || skinW);
+  const deviceH = follow ? skinH : Math.max(120, state.deviceH || skinH);
 
-  stage.style.width = (L.w * k) + "px";
-  stage.style.height = (L.h * k) + "px";
+  const k = Math.min(availW / deviceW, availH / deviceH);
+  const sim = state.simStatus;
+  // the bar keeps to the short side's fifteenth unless the field beside it names a
+  // height; following the layout leaves it on that rule, like the size fields
+  // like the size fields, this is a plain number once it has been set; only while
+  // it is still unset does the layout suggest one (the short side's fifteenth)
+  const autoStatus = Math.max(8, Math.round(Math.min(deviceW, deviceH) / 15));
+  const statusDev = sim ? (state.statusBarH > 0 ? state.statusBarH : autoStatus) : 0;
+  // The skin always fills the width; the height is only ever squeezed to fit.
+  // A screen taller than the layout needs leaves the rest empty instead of
+  // stretching the skin over it, which is what the device does.
+  const sx = deviceW / skinW;
+  const sy = Math.min(sx, Math.max(1, deviceH - statusDev) / skinH);
+  const kx = sx * k;
+  const ky = sy * k;
+  const offY = statusDev * k;
+  const skinPxW = skinW * kx;
+  const skinPxH = skinH * ky;
+
+  stage.style.width = (deviceW * k) + "px";
+  stage.style.height = (deviceH * k) + "px";
   // the canvas is painted with the skin's own background colour; without one the
   // device shows black, not the colour of whatever sits behind the view
   const base = (skin.def.fonts.backgroundcol || {}).c;
-  stage.style.background = base || "#000";
+  // what the skin does not cover stays the device's own empty space: black
+  stage.style.background = "#000";
   // build into a hidden layer and swap when it is painted: clearing the stage
   // first leaves one frame with nothing in it, which reads as a flash
+  // the refs below point into the frame being built, so they start empty
+  state.artEl = null;
+  state.artNextEl = null;
+
   const buf = document.createElement("div");
   buf.className = "buf";
-  buf.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;pointer-events:none;";
+  // the buffer is the skin itself, sitting below the status bar; the device's
+  // leftover space around it keeps the stage colour
+  buf.style.cssText = "position:absolute;left:0;top:" + offY + "px;width:" + skinPxW +
+    "px;height:" + skinPxH + "px;background:" + (base || "#000") +
+    ";opacity:0;pointer-events:none;";
   const token = (state.renderToken = (state.renderToken || 0) + 1);
   state.buttons = [];
   state.posUI = null;
@@ -581,10 +656,11 @@ function render() {
   for (const e of els) {
     let el = null;
     const place = (node) => {
-      node.style.left = e.x * k + "px";
-      node.style.top = e.y * k + "px";
-      node.style.width = e.w * k + "px";
-      node.style.height = e.h * k + "px";
+      node.style.left = e.x * kx + "px";
+      // the buffer itself already starts below the status bar, so no offset here
+      node.style.top = (e.y * ky) + "px";
+      node.style.width = e.w * kx + "px";
+      node.style.height = e.h * ky + "px";
       buf.appendChild(node);
     };
 
@@ -617,15 +693,16 @@ function render() {
       } else {
         el.textContent = plainText(e.raw || "");
       }
-      // Font size as a fraction of the label box height, calibrated by
-      // comparing rendered text widths with a device screenshot at the same
-      // scale: 0.85 was 5% too wide, 0.81 lands within half a percent.
+      el.dataset.text = el.textContent || "";
+      // Font size as a fraction of the label box height, calibrated against a
+      // device screenshot of the Eclipse skin: 0.85 was 5% too wide, 0.81 lands
+      // within half a percent of the device's line widths.
       // no absolute minimum: it would break the ratio whenever the page is
       // zoomed out, because the stage shrinks while 7px does not
-      const baseFont = Math.max(0.5, e.h * k * 0.81);
+      const baseFont = Math.max(0.5, e.h * ky * 0.81);
       el.style.fontSize = baseFont + "px";
       el.dataset.baseSize = String(baseFont);
-      el.style.lineHeight = e.h * k + "px";
+      el.style.lineHeight = e.h * ky + "px";
       el.style.textAlign =
         e.align === "right" ? "right" : e.align === "centered" ? "center" : "left";
       const raw = String(e.raw || "");
@@ -658,10 +735,13 @@ function render() {
       const shown = none ? null : (src || fallback);
       if (shown) {
         el.style.backgroundImage = 'url("' + shown + '")';
-        el.style.backgroundSize = "contain";
+        // the picture fills its box even when the frame squeezes the skin, which
+        // is what the device does with the artwork too
+        el.style.backgroundSize = "100% 100%";
         el.style.backgroundPosition = "center";
         el.style.backgroundRepeat = "no-repeat";
       }
+      if (e.next) state.artNextEl = el; else state.artEl = el;
 
     } else if (e.t === "pos") {
         el = document.createElement("div");
@@ -693,7 +773,7 @@ function render() {
           track.style.left = "0";
           track.style.right = "0";
           track.style.top = "0";
-          track.style.height = (e.h * k) + "px";
+          track.style.height = (e.h * ky) + "px";
           el.appendChild(track);
 
           if (showTrack) {
@@ -701,28 +781,31 @@ function render() {
             played.style.position = "absolute";
             played.style.left = "0";
             played.style.top = "0";
-            played.style.height = (e.h * k) + "px";
+            played.style.height = (e.h * ky) + "px";
             played.style.width = (state.pos * 100) + "%";
             // the played piece is the same picture clipped to the elapsed width,
             // not the whole picture squeezed into it (that looked faint)
             played.style.backgroundImage = 'url("' + posImage(e.barHot || e.bar) + '")';
-            played.style.backgroundSize = (e.w * k) + "px " + (e.h * k) + "px";
+            played.style.backgroundSize = (e.w * kx) + "px " + (e.h * ky) + "px";
             played.style.backgroundPosition = "left center";
             played.style.backgroundRepeat = "no-repeat";
             el.appendChild(played);
 
             const knob = document.createElement("div");
-            const knobSize = e.knob ? e.h * k : 0;
+            const knobSize = e.knob ? e.h * ky : 0;
             if (paint(knob, e.knob, "contain")) {
+              // the marker slides over the distance the strip leaves free, so it
+              // never hangs past either end of it
+              const travel = Math.max(0, (e.w * kx) - knobSize);
               knob.style.position = "absolute";
-              knob.style.top = ((mid * k) - (knobSize / 2)) + "px";
-              knob.style.left = "calc(" + (state.pos * 100) + "% - " + (knobSize / 2) + "px)";
+              knob.style.top = ((mid * ky) - (knobSize / 2)) + "px";
+              knob.style.left = Math.round(state.pos * travel) + "px";
               knob.style.width = knobSize + "px";
               knob.style.height = knobSize + "px";
               el.appendChild(knob);
-              state.posUI = { played, knob, d: knobSize };
+              state.posUI = { played, knob, d: knobSize, travel };
             } else {
-              state.posUI = { played, knob: null, d: 0 };
+              state.posUI = { played, knob: null, d: 0, travel: 0 };
             }
 
             el.style.pointerEvents = "auto";
@@ -759,6 +842,46 @@ function render() {
 
     if (el) place(el);
   }
+  if (sim) {
+    const fg = luminanceOf(base) > 0.55 ? "#141414" : "#ffffff";
+    const bar = document.createElement("div");
+    bar.className = "simbar";
+    // the buffer starts below the bar, so the bar is placed back at the top of
+    // the screen instead of at the top of the skin
+    bar.style.top = (-offY) + "px";
+    bar.style.height = (statusDev * k) + "px";
+    bar.style.background = base || "#000";
+    bar.style.color = fg;
+    bar.style.padding = "0 " + Math.round(statusDev * k * 0.52) + "px";
+    const clock = document.createElement("div");
+    clock.id = "simclock";
+    clock.textContent = wallClock();
+    clock.style.fontSize = Math.round(statusDev * k * 0.44) + "px";
+    bar.appendChild(clock);
+    const icons = document.createElement("div");
+    icons.className = "simicons";
+    icons.style.gap = Math.round(statusDev * k * 0.28) + "px";
+    icons.style.height = Math.round(statusDev * k * 0.44) + "px";
+    icons.innerHTML = SIM_WIFI + SIM_BATTERY;
+    bar.appendChild(icons);
+    buf.appendChild(bar);
+  }
+
+  // the bottom bar mirrors what this render actually used
+  const sh = $("status-h");
+  if (sh) {
+    // never overwrite what is being typed: a redraw can land between keystrokes
+    if (document.activeElement !== sh) sh.value = String(statusDev || autoStatus);
+    sh.disabled = !sim;
+  }
+  const bw = $("device-w"), bh = $("device-h"), bf = $("device-follow");
+  if (bw && bh) {
+    bw.value = String(follow ? skinW : deviceW);
+    bh.value = String(follow ? skinH : deviceH);
+    bw.disabled = bh.disabled = follow;
+  }
+  if (bf) bf.checked = follow;
+
   refreshButtons();
   updateClocks(buf);
 
@@ -777,6 +900,12 @@ function render() {
   });
 }
 
+// the preview clock keeps time even when nothing else changes
+setInterval(() => {
+  const c = document.getElementById("simclock");
+  if (c) c.textContent = wallClock();
+}, 10000);
+
 // ------------------------------------------------------------- interaction --
 async function stopPlayback() {
   const a = $("audio");
@@ -793,17 +922,8 @@ async function stopPlayback() {
   await syncSlot("keep");
 }
 
-function act(action, isLong) {
+function act(action) {
   const a = $("audio");
-
-  if (isLong) {
-    // holding play stops the track; every other key behaves like a tap, so it
-    // falls through to the switch below instead of calling back into act()
-    if (action === "playnpause") { stopPlayback(); return; }
-  } else if (state.longGesture >= 0 && state.longGesture === state.pressGesture) {
-    // the release that follows a held press belongs to that same gesture
-    return;
-  }
 
   switch (action) {
     case "playnpause":
@@ -888,42 +1008,54 @@ function act(action, isLong) {
   refreshButtons();
 }
 
+// which key does something else while held; the device uses this for play only
+const HELD_ACTIONS = { playnpause: "stop" };
+
 function wireButton(el, e, skin) {
   const btn = { el, e, skin, pair: null };
   let timer = null, longFired = false;
+  // a key may carry a second meaning while held; every other key is just a tap
+  const held = HELD_ACTIONS[e.action] || null;
 
   const showHot = () => { if (btn.pair && btn.pair.hot) el.src = btn.pair.hot; };
   const showRest = () => { if (btn.pair && btn.pair.normal) el.src = btn.pair.normal; };
 
+  // the release is watched on the window: a render can replace this element
+  // between press and release, and a release that never arrived used to let the
+  // long-press timer fire — which for the play key means stop
+  const release = (ev) => {
+    window.removeEventListener("pointerup", release, true);
+    window.removeEventListener("pointercancel", release, true);
+    if (timer) { clearTimeout(timer); timer = null; }
+    const wasLong = longFired;
+    longFired = false;
+    if (state.pressedKey === e.action) state.pressedKey = null;
+    showRest();
+    // the key on screen may be a newer element than the one that was pressed
+    if (state.pressedKey === null) refreshButtons();
+    // a tap counts even when a render replaced the key while it was held: the
+    // press was meant for this action
+    if (!wasLong) {
+      if (el.isConnected && ev && ev.preventDefault) ev.preventDefault();
+      act(e.action);
+    }
+  };
+
   el.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
     try { el.setPointerCapture(ev.pointerId); } catch (_) {}
-    state.gesture += 1;
-    state.pressGesture = state.gesture;   // a fresh press is a fresh gesture
     longFired = false;
+    state.pressedKey = e.action;
     showHot();
+    window.addEventListener("pointerup", release, true);
+    window.addEventListener("pointercancel", release, true);
+    if (!held) return;
     timer = setTimeout(() => {
       timer = null;
       longFired = true;
-      state.longGesture = state.pressGesture;   // this gesture already acted
-      act(e.action, true);
+      act(held);
       showRest();
     }, 450);
-  });
-
-  el.addEventListener("pointerup", (ev) => {
-    ev.preventDefault();
-    if (timer) { clearTimeout(timer); timer = null; }
-    const wasLong = longFired || state.longGesture === state.pressGesture;
-    longFired = false;
-    showRest();
-    if (!wasLong) act(e.action, false);
-  });
-
-  el.addEventListener("pointercancel", () => {
-    if (timer) { clearTimeout(timer); timer = null; }
-    longFired = false;
-    showRest();
   });
 
   state.buttons.push(btn);
@@ -1369,7 +1501,10 @@ async function goto(id) {
 // hunting for the right pixel.
 function syncChrome() {
   const shape = $("play-shape");
-  if (shape) shape.setAttribute("d", state.playing ? "M7 5h4v14H7zm6 0h4v14h-4z" : "M8 5v14l11-7z");
+  // Heroicons solid: play and pause, each a single path
+  if (shape) shape.setAttribute("d", state.playing
+    ? "M6.75 5.25a.75.75 0 0 1 .75-.75H9a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H7.5a.75.75 0 0 1-.75-.75V5.25Zm7.5 0A.75.75 0 0 1 15 4.5h1.5a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H15a.75.75 0 0 1-.75-.75V5.25Z"
+    : "M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z");
   const ord = $("order");
   if (ord) ord.value = state.shuffle ? "shuffle" : state.onetrack ? "one" : "default";
   const rep = $("mode-repeat");
@@ -1617,6 +1752,11 @@ const I18N = {
     "theme.light": "浅色",
     "theme.dark": "深色",
     "lang.label": "语言",
+    "clear": "清空",
+    "follow": "跟随布局尺寸",
+    "sim.label": "状态栏",
+    "device.tip": "真机屏幕尺寸（像素）",
+    "sim.tip": "按真机的方式压缩皮肤并画出状态栏",
     "open.skin.tip": "实时监测改动",
     "open.pkg.tip": "*.fbskin / *.zip",
     "add.audio.tip": "追加到播放列表",
@@ -1650,6 +1790,11 @@ const I18N = {
     "theme.light": "Light",
     "theme.dark": "Dark",
     "lang.label": "Language",
+    "clear": "Clear",
+    "follow": "Follow the layout size",
+    "sim.label": "Status bar",
+    "device.tip": "device screen size in pixels",
+    "sim.tip": "squeeze the skin as the phone does and draw its status bar",
     "open.skin.tip": "changes are watched live",
     "open.pkg.tip": "*.fbskin / *.zip",
     "add.audio.tip": "append to the playlist",
@@ -1675,11 +1820,26 @@ const I18N = {
 
 const THEMES = ["auto", "light", "dark"];
 // half-filled circle, sun and moon, drawn rather than typed
+// material symbols rounded: contrast, light_mode and dark_mode
 const ICON = {
-  auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" stroke="none"/>',
-  light: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/>',
-  dark: '<path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z"/>',
+  auto: '<path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80v-640q-133 0-226.5 93.5T160-480q0 133 93.5 226.5T480-160Z"/>',
+  light: '<path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 56-52 101 97-60 56Zm-97-508 97-101 60 56-102 101-55-56ZM212 792l-56-60 101-97 55 56-100 101Z"/>',
+  dark: '<path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Zm0-80q88 0 158-48.5T740-375q-20 5-40 8t-40 3q-123 0-209.5-86.5T364-660q0-20 3-40t8-40q-78 32-126.5 102T200-480q0 116 82 198t198 82Zm-10-270Z"/>',
 };
+
+// status bar glyphs: wifi arcs and a battery, drawn in the bar's own colour
+// filled bands, like the one Android draws: outlines read as a smudge at this
+// size, solid shapes stay clean
+const SIM_WIFI =
+  // bootstrap icons: wifi
+  '<svg viewBox="0 0 16 16" fill="currentColor">' +
+  '<path d="M15.384 6.115a.485.485 0 0 0-.047-.736A12.44 12.44 0 0 0 8 3C5.259 3 2.723 3.882.663 5.379a.485.485 0 0 0-.048.736.52.52 0 0 0 .668.05A11.45 11.45 0 0 1 8 4c2.507 0 4.827.802 6.716 2.164.205.148.49.13.668-.049"/>' +
+  '<path d="M13.229 8.271a.482.482 0 0 0-.063-.745A9.46 9.46 0 0 0 8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065A8.46 8.46 0 0 1 8 7a8.46 8.46 0 0 1 4.576 1.336c.206.132.48.108.653-.065m-2.183 2.183c.226-.226.185-.605-.1-.75A6.5 6.5 0 0 0 8 9c-1.06 0-2.062.254-2.946.704-.285.145-.326.524-.1.75l.015.015c.16.16.407.19.611.09A5.5 5.5 0 0 1 8 10c.868 0 1.69.201 2.42.56.203.1.45.07.61-.091zM9.06 12.44c.196-.196.198-.52-.04-.66A2 2 0 0 0 8 11.5a2 2 0 0 0-1.02.28c-.238.14-.236.464-.04.66l.706.706a.5.5 0 0 0 .707 0l.707-.707z"/></svg>';
+const SIM_BATTERY =
+  // bootstrap icons: battery-full
+  '<svg viewBox="0 0 16 16" fill="currentColor">' +
+  '<path d="M2 6h10v4H2z"/>' +
+  '<path d="M2 4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm10 1a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm4 3a1.5 1.5 0 0 1-1.5 1.5v-3A1.5 1.5 0 0 1 16 8"/></svg>';
 
 // a short line at the bottom of the screen, for things that are refused. Every
 // message is its own popup: a new one rises over the one still standing there
@@ -1725,6 +1885,7 @@ function applyLang() {
   set("browse-pkg", "open.pkg");
   set("add-audio", "add.audio");
   set("open-list", "open.list");
+  set("clear-list", "clear");
   const tip = (id, key) => { const el = $(id); if (el) el.title = t(key); };
   tip("browse-folder", "open.skin.tip");
   tip("browse-pkg", "open.pkg.tip");
@@ -1733,6 +1894,13 @@ function applyLang() {
   tip("clear-list", "clear.list");
   const lab = document.querySelector(".lang-label");
   if (lab) lab.textContent = t("lang.label");
+  set("follow-label", "follow");
+  set("sim-label", "sim.label");
+  const dwEl = $("device-w"), dhEl = $("device-h");
+  if (dwEl) dwEl.title = t("device.tip");
+  if (dhEl) dhEl.title = t("device.tip");
+  const simLab = document.querySelectorAll("#devicebar .check");
+  if (simLab.length) simLab[simLab.length - 1].title = t("sim.tip");
 
   const orderLabel = $("order-label");
   if (orderLabel) {
@@ -1768,7 +1936,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = asked || state.theme;
   const b = $("theme-toggle");
   if (b) {
-    b.innerHTML = '<svg viewBox="0 0 24 24" stroke-linecap="round">' +
+    b.innerHTML = '<svg viewBox="0 -960 960 960">' +
                   (ICON[state.theme] || ICON.auto) + "</svg>";
     const dict = I18N[state.lang] || I18N.en;
     b.title = dict["theme." + state.theme] || "";
@@ -1803,6 +1971,73 @@ function wirePrefs() {
     localStorage.setItem("theme", next);
     applyTheme();
   });
+
+  // the status bar preview: off unless asked for, remembered like the theme
+  state.simStatus = localStorage.getItem("simStatus") === "1";
+  const askedSim = new URLSearchParams(location.search).get("sim");
+  if (askedSim === "1") state.simStatus = true;
+  if (askedSim === "0") state.simStatus = false;
+  const q = new URLSearchParams(location.search);
+  state.simStatus = localStorage.getItem("simStatus") === "1";
+  state.deviceFollow = localStorage.getItem("deviceFollow") !== "0";
+  state.deviceW = parseInt(localStorage.getItem("deviceW") || "0", 10) || 0;
+  state.deviceH = parseInt(localStorage.getItem("deviceH") || "0", 10) || 0;
+  if (q.get("sim") === "1") state.simStatus = true;
+  if (q.get("sim") === "0") state.simStatus = false;
+  const askedDev = q.get("dev");                 // ?dev=1080x1920
+  if (askedDev && /^\d+x\d+$/.test(askedDev)) {
+    const parts = askedDev.split("x").map(Number);
+    state.deviceW = parts[0];
+    state.deviceH = parts[1];
+    state.deviceFollow = false;
+  }
+
+  const sb = $("sim-status");
+  if (sb) {
+    sb.checked = state.simStatus;
+    sb.addEventListener("change", () => {
+      state.simStatus = sb.checked;
+      localStorage.setItem("simStatus", sb.checked ? "1" : "0");
+      render();
+    });
+  }
+  const fs = $("device-follow");
+  if (fs) {
+    fs.checked = state.deviceFollow;
+    fs.addEventListener("change", () => {
+      state.deviceFollow = fs.checked;
+      localStorage.setItem("deviceFollow", fs.checked ? "1" : "0");
+      render();
+    });
+  }
+  state.statusBarH = parseInt(localStorage.getItem("statusBarH") || "0", 10) || 0;   // 0: work it out
+  const sw = $("status-h");
+  if (sw) {
+    const applyHeight = (rewrite) => {
+      // an empty field goes back to the automatic height
+      const typed = parseInt(sw.value, 10);
+      const next = sw.value.trim() === "" || !typed ? 0 : Math.max(8, Math.min(600, typed));
+      if (next === state.statusBarH && !rewrite) return;
+      state.statusBarH = next;
+      localStorage.setItem("statusBarH", String(next));
+      render();
+    };
+    sw.addEventListener("input", () => applyHeight(false));
+    sw.addEventListener("change", () => applyHeight(true));
+  }
+  const dw = $("device-w"), dh = $("device-h");
+  const readDims = () => {
+    if (!dw || !dh) return;
+    const w = Math.max(120, Math.min(8000, parseInt(dw.value, 10) || 0));
+    const h = Math.max(120, Math.min(8000, parseInt(dh.value, 10) || 0));
+    if (!w || !h) return;
+    state.deviceW = w; state.deviceH = h;
+    localStorage.setItem("deviceW", String(w));
+    localStorage.setItem("deviceH", String(h));
+    render();
+  };
+  if (dw) dw.addEventListener("change", readDims);
+  if (dh) dh.addEventListener("change", readDims);
 }
 
 function wireModes() {
@@ -1818,7 +2053,7 @@ function wireModes() {
 function wireChrome() {
   $("btn-prev").addEventListener("click", () => goto(manualPrev()));
   $("btn-next").addEventListener("click", () => goto(manualNext()));
-  $("btn-play").addEventListener("click", () => act("playnpause", false));
+  $("btn-play").addEventListener("click", () => act("playnpause"));
   $("btn-stop").addEventListener("click", () => stopPlayback());
 
   // dragging must not be fought by the player echoing its own position back
@@ -1953,6 +2188,9 @@ function fillSkins() {
   }
   // rebuild the options but keep the chosen skin: rebuilding alone resets the
   // element to its first entry, which undid a selection made moments earlier
+  // ?skin= picks one by name, which makes a render reproducible for a report
+  const asked = new URLSearchParams(location.search).get("skin");
+  if (asked && skins.has(asked)) state.skin = asked;
   const keep = skins.has(state.skin) ? state.skin : null;
   sel.value = keep || sel.value || skins.keys().next().value;
   state.skin = sel.value;
@@ -1979,7 +2217,10 @@ function fillLayouts() {
   const names = Object.keys(skin.layouts);
   // the skin's own order decides; a remembered choice wins for this skin
   const remembered = localStorage.getItem("layout:" + state.skin);
-  state.layout = (remembered && names.includes(remembered)) ? remembered : names[0];
+  // ?layout= picks one by name, which makes a render reproducible for a bug report
+  const asked = new URLSearchParams(location.search).get("layout");
+  state.layout = (asked && names.includes(asked)) ? asked
+    : (remembered && names.includes(remembered)) ? remembered : names[0];
   sel.value = state.layout;
 }
 
