@@ -27,8 +27,8 @@ DEFAULT_WHITE RCDATA "assets/default-white.fbskin"
 1 RT_MANIFEST "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,1,0,0
-PRODUCTVERSION  0,1,0,0
+FILEVERSION     0,2,0,0
+PRODUCTVERSION  0,2,0,0
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -41,11 +41,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Jiayu"
             VALUE "FileDescription",  "fb2km mobile skin viewer"
-            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "FileVersion",      "0.2.0.0"
             VALUE "InternalName",     "fbsv"
             VALUE "OriginalFilename", "fbsv.exe"
             VALUE "ProductName",      "Eclipse skin viewer"
-            VALUE "ProductVersion",   "0.1.0.0"
+            VALUE "ProductVersion",   "0.2.0.0"
         END
     END
     BLOCK "VarFileInfo"
