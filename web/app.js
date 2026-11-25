@@ -347,9 +347,19 @@ function resolveColour(value, def) {
 // the player's volume, 0..1; nothing in the interface changes it yet, so this is
 // the audio element's own value
 function volumeFraction() {
+  if (Number.isFinite(state.volume)) return Math.max(0, Math.min(1, state.volume));
   const audio = document.getElementById("audio");
   const v = audio ? audio.volume : 1;
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
+}
+
+// dragging a volume bar only repaints the bars, like a seek drag repaints the bar
+function setVolume(ratio) {
+  state.volume = Math.min(1, Math.max(0, ratio));
+  for (const bar of state.volumeBars || []) {
+    bar.played.style.width = (state.volume * 100) + "%";
+    if (bar.knob) bar.knob.style.left = Math.round(state.volume * bar.travel) + "px";
+  }
 }
 
 function parseArm(lines, def, mode, overrides) {
@@ -689,6 +699,7 @@ function render() {
     ? (hasNext ? L.els : (L.elsNoNext.length ? L.elsNoNext : L.els))
     : (L.elsAlt.length ? L.elsAlt : L.els);
 
+  state.volumeBars = [];
   const box = $("wrap");
   const availW = Math.max(0, box.clientWidth - 32);
   const availH = Math.max(0, box.clientHeight - 32);
@@ -947,17 +958,19 @@ function render() {
               knob.style.width = knobW + "px";
               knob.style.height = knobH + "px";
               el.appendChild(knob);
-              if (!e.volume) state.posUI = { played, knob, d: knobW, travel };
+              if (e.volume) {
+                state.volumeBars.push({ played, knob, travel });
+              } else {
+                state.posUI = { played, knob, d: knobW, travel };
+              }
             } else if (!e.volume) {
               state.posUI = { played, knob: null, d: 0, travel: 0 };
             }
 
-            if (!e.volume) {
-              el.style.pointerEvents = "auto";
-              el.style.cursor = "pointer";
-              el.style.touchAction = "none";
-              wireSeek(el);
-            }
+            el.style.pointerEvents = "auto";
+            el.style.cursor = "pointer";
+            el.style.touchAction = "none";
+            if (e.volume) wireVolume(el); else wireSeek(el);
           }
         }
 
@@ -1309,6 +1322,37 @@ function settleSeek() {
 
 function seekThrottled(force) {
   if (force || Date.now() - lastSeek >= SEEK_INTERVAL) seekNow();
+}
+
+// a volume bar is dragged like a seek bar, but it moves the player's volume
+function wireVolume(el) {
+  let dragging = false;
+
+  const ratioAt = (ev) => {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return null;
+    return Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+  };
+
+  const apply = (r) => {
+    const audio = $("audio");
+    if (audio) audio.volume = r;
+    setVolume(r);
+  };
+
+  el.addEventListener("pointerdown", (ev) => {
+    dragging = true;
+    try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+    const r = ratioAt(ev);
+    if (r !== null) apply(r);
+    window.addEventListener("pointerup", () => { dragging = false; }, { once: true });
+  });
+
+  el.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    const r = ratioAt(ev);
+    if (r !== null) apply(r);
+  });
 }
 
 function wireSeek(el) {
