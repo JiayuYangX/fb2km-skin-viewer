@@ -377,53 +377,77 @@ function parseArm(lines, def, mode, overrides) {
     if (line === "*end") { if (branch.length) branch.pop(); i++; continue; }
     if (branch.some((b) => !b.draw)) { i++; continue; }
 
+    // Every element is read by its own fixed line count, and one that does not
+    // carry what the format asks for is dropped rather than drawn in part - the
+    // device leaves an empty box for a button with missing pictures.
+    const box = (v) => {
+      const parts = String(v || "").split(",").map(Number);
+      return parts.length === 4 && parts.every((n) => Number.isFinite(n)) ? parts : null;
+    };
     if (line === "[rectangle]") {
       const c = resolveColour(lines[i + 1], def);
-      const [x, y, w, h] = lines[i + 2].split(",").map(Number);
-      if (c) els.push({ t: "rect", x, y, w, h, c });
+      const b = box(lines[i + 2]);
+      if (c && b) els.push({ t: "rect", x: b[0], y: b[1], w: b[2], h: b[3], c });
       i += 3; continue;
     }
     if (line === "[label]") {
-      const [x, y, w, h] = lines[i + 1].split(",").map(Number);
-      const align = lines[i + 2].split(",")[0].trim();
+      const b = box(lines[i + 1]);
+      const align = (lines[i + 2] || "").split(",")[0].trim();
       const content = lines[i + 3] || "";
-      const st = labelStyle(content, def);
-      const src = /\[infosource-([\w-]+)\]/.exec(content);
-      els.push({ t: "label", x, y, w, h, align, c: st.c || null, b: st.b, i: st.i,
-                   raw: content, source: src ? src[1] : "" });
+      if (b) {
+        const st = labelStyle(content, def);
+        const src = /\[infosource-([\w-]+)\]/.exec(content);
+        els.push({ t: "label", x: b[0], y: b[1], w: b[2], h: b[3], align, c: st.c || null,
+                   b: st.b, i: st.i, raw: content, source: src ? src[1] : "" });
+      }
       i += 4; continue;
     }
     if (line === "[image]") {
-      const [x, y, w, h] = lines[i + 2].split(",").map(Number);
-      els.push({ t: "image", x, y, w, h, src: lines[i + 1].trim() });
+      const b = box(lines[i + 2]);
+      const file = (lines[i + 1] || "").trim();
+      if (b && /\.(png|jpe?g|webp)$/i.test(file)) {
+        els.push({ t: "image", x: b[0], y: b[1], w: b[2], h: b[3], src: file });
+      }
       i += 3; continue;
     }
     if (line === "[albumart]") {
-      const [x, y, w, h] = lines[i + 1].split(",").map(Number);
-      const source = (lines[i + 2] || "").trim().toLowerCase();
-      els.push({ t: "art", x, y, w, h, next: source === "next" });
+      const b = box(lines[i + 1]);
+      const which = (lines[i + 2] || "").trim().toLowerCase();
+      if (b && (which === "main" || which === "next")) {
+        els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3], next: which === "next" });
+      }
       i += 3; continue;
     }
     if (line === "[position]") {
-      const [x, y, w, h] = lines[i + 1].split(",").map(Number);
-      const png = (v) => (/\.png$/i.test((v || "").trim()) ? v.trim() : "");
-      els.push({ t: "pos", x, y, w, h,
-                 knob: png(lines[i + 2]), bar: png(lines[i + 3]), barHot: png(lines[i + 4]) });
+      const b = box(lines[i + 1]);
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      const knob = png(lines[i + 2]), bar = png(lines[i + 3]), barHot = png(lines[i + 4]);
+      if (b && knob && bar && barHot) {
+        els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3], knob, bar, barHot });
+      }
       i += 5; continue;
     }
     if (line === "[button]") {
-      const [x, y, w, h] = lines[i + 1].split(",").map(Number);
-      const png = (v) => (/\.png$/i.test((v || "").trim()) ? v.trim() : "");
-      els.push({ t: "btn", x, y, w, h,
-                 action: (lines[i + 2] || "").trim(),
-                 src: png(lines[i + 3]), hot: png(lines[i + 4]),
-                 src2: png(lines[i + 5]), hot2: png(lines[i + 6]) });
+      const b = box(lines[i + 1]);
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      // a button is seven lines: box, action and four pictures. The device drops
+      // one that does not carry all four rather than drawing half of it
+      const src = png(lines[i + 3]), hot = png(lines[i + 4]);
+      const src2 = png(lines[i + 5]), hot2 = png(lines[i + 6]);
+      if (b && src && hot && src2 && hot2) {
+        els.push({ t: "btn", x: b[0], y: b[1], w: b[2], h: b[3],
+                   action: (lines[i + 2] || "").trim(),
+                   src, hot, src2, hot2 });
+      }
       i += 7; continue;
     }
     if (line === "[line]") {
       const c = resolveColour(lines[i + 1], def);
-      const [x1, y1, x2, y2] = lines[i + 2].split(",").map(Number);
-      els.push({ t: "line", x: x1, y: y1, w: x2 - x1, h: Math.max(1, y2 - y1), c: c || "#888" });
+      const parts = String(lines[i + 2] || "").split(",").map(Number);
+      if (c && parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
+        const [x1, y1, x2, y2] = parts;
+        els.push({ t: "line", x: x1, y: y1, w: x2 - x1, h: Math.max(1, y2 - y1), c });
+      }
       i += 3; continue;
     }
     i++;
@@ -759,7 +783,11 @@ function render() {
         // overflow the box, which is what the phone does with a frame too short
         const fitArt = (url) => {
           const size = artSize(url, () => {
-            if (el.style.backgroundImage.indexOf(url) >= 0) fitArt(url);
+            // the picture's size arrives after the element is on screen, and this
+            // call's return value has nowhere to go: apply it here
+            if (el.style.backgroundImage.indexOf(url) >= 0) {
+              el.style.backgroundSize = fitArt(url);
+            }
           });
           if (!size) return "100% auto";                 // unknown yet: keep the shape
           return size.h * (boxW / size.w) > boxH + 0.5 ? "100% 100%" : "100% auto";
