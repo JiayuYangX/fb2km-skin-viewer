@@ -358,6 +358,44 @@ struct ZipEntry {
     vector<uint8_t> data;
 };
 
+
+static bool read_zip(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<string> &skipped);
+
+// The old designer did not write a zip: its packages are a run of records, each
+// beginning with "DGC" and a flag byte, then the name length, the data length,
+// the name and the data. Every entry in the samples is stored, flag 08.
+static bool read_dgc(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<string> &skipped) {
+    auto u32 = [&](size_t o) {
+        return (uint32_t)buf[o] | ((uint32_t)buf[o + 1] << 8) | ((uint32_t)buf[o + 2] << 16) |
+               ((uint32_t)buf[o + 3] << 24);
+    };
+    size_t off = 0;
+    while (off + 12 <= buf.size()) {
+        if (buf[off] != 'D' || buf[off + 1] != 'G' || buf[off + 2] != 'C') return false;
+        const uint8_t flag = buf[off + 3];
+        const uint32_t nameLen = u32(off + 4);
+        const uint32_t dataLen = u32(off + 8);
+        if (nameLen > 4096 || off + 12 + nameLen + dataLen > buf.size()) return false;
+        string name((const char *)&buf[off + 12], nameLen);
+        const size_t start = off + 12 + nameLen;
+        if (flag == 0x08) {
+            out.push_back({name, vector<uint8_t>(buf.begin() + start, buf.begin() + start + dataLen)});
+        } else {
+            skipped.push_back(name);
+        }
+        off = start + dataLen;
+    }
+    return !out.empty();
+}
+
+// zip is the current container, DGC the old one
+static bool read_package(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<string> &skipped) {
+    if (buf.size() > 3 && buf[0] == 'D' && buf[1] == 'G' && buf[2] == 'C') {
+        return read_dgc(buf, out, skipped);
+    }
+    return read_zip(buf, out, skipped);
+}
+
 // .fbskin packages are stored (uncompressed); deflated entries are reported
 static bool read_zip(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<string> &skipped) {
     auto u32 = [&](size_t o) {
@@ -1059,7 +1097,7 @@ static bool open_skin_path(Session &sess, const fs::path &p, string &err) {
         vector<uint8_t> buf(raw.begin(), raw.end());
         vector<ZipEntry> entries;
         vector<string> skipped;
-        if (!read_zip(buf, entries, skipped) || entries.empty()) {
+        if (!read_package(buf, entries, skipped) || entries.empty()) {
             err = "cannot read the package";
             return false;
         }
@@ -2018,7 +2056,7 @@ static std::map<string, string> unpack_resource(const wchar_t *id) {
     vector<uint8_t> buf(raw.begin(), raw.end());
     vector<ZipEntry> entries;
     vector<string> skipped;
-    if (!read_zip(buf, entries, skipped)) return out;
+    if (!read_package(buf, entries, skipped)) return out;
     for (auto &e : entries)
         out[lower(e.name)] = string((const char *)e.data.data(), e.data.size());
     return out;
@@ -2346,7 +2384,7 @@ int main() {
             vector<uint8_t> buf(raw.begin(), raw.end());
             vector<ZipEntry> entries;
             vector<string> skipped;
-            if (!read_zip(buf, entries, skipped)) {
+            if (!read_package(buf, entries, skipped)) {
                 printf("cannot read %s as a skin package\n", skinArg.string().c_str());
                 return 1;
             }
