@@ -2173,10 +2173,11 @@ static bool handleAssociation(bool install) {
     if (install) {
         regWrite(L"Software\\Classes\\.fbskin", nullptr, L"fbsv.skin");
         regWrite(L"Software\\Classes\\.fbskin\\OpenWithProgids", L"fbsv.skin", L"");
-        regWrite(L"Software\\Classes\\fbsv.skin", nullptr, L"foobar2000 mobile Skin Viewer");
+        regWrite(L"Software\\Classes\\fbsv.skin", nullptr, L"foobar2000 mobile skin");
         regWrite(L"Software\\Classes\\Applications\\fbsv.exe", L"FriendlyAppName",
                  L"foobar2000 mobile Skin Viewer");
-        regWrite(L"Software\\Classes\\fbsv.skin\\DefaultIcon", nullptr, (std::wstring(L"\"") + exe + L"\",0").c_str());
+        regWrite(L"Software\\Classes\\fbsv.skin\\DefaultIcon", nullptr,
+                 (std::wstring(L"\"") + exe + L"\",-2").c_str());   // -2: resource id 2
         regWrite(L"Software\\Classes\\fbsv.skin\\shell\\open\\command", nullptr, cmd.c_str());
         regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\SupportedTypes", L".fbskin", L"");
         regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\shell\\open\\command", nullptr, cmd.c_str());

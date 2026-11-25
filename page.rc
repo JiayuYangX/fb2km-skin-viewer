@@ -17,6 +17,8 @@ ROBOTO_MEDIUM_ITALIC RCDATA "web/fonts/Roboto-MediumItalic.woff2"
 ROBOTO_ITALIC      RCDATA "web/fonts/Roboto-Italic.woff2"
 ROBOTO_BOLD_ITALIC RCDATA "web/fonts/Roboto-BoldItalic.woff2"
 1 ICON "assets/icon.ico"
+// the file type's own icon: a phone with the mark on its screen
+2 ICON "assets/fbskin.ico"
 APP_ICON RCDATA "assets/icon.ico"
 APP_ICON_PNG RCDATA "assets/icon.png"
 BRAND_PNG RCDATA "assets/brand.png"
