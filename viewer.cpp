@@ -1757,6 +1757,65 @@ static void load_default_skins() {
     printf("default skins: %zu black, %zu white\n", g_default_black.size(), g_default_white.size());
 }
 
+
+// ------------------------------------------------------------------- assoc --
+// A per-user "open with" entry for .fbskin. It never touches the user's default
+// choice, which Windows protects: the association only makes fbsv show up in the
+// Open with list, where the user picks it once.
+static bool regWrite(const wchar_t *sub, const wchar_t *name, const wchar_t *value) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, sub, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr)
+        != ERROR_SUCCESS) {
+        return false;
+    }
+    const DWORD bytes = (DWORD)((wcslen(value) + 1) * sizeof(wchar_t));
+    const bool ok = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value), bytes)
+                    == ERROR_SUCCESS;
+    RegCloseKey(key);
+    return ok;
+}
+
+static void regDrop(const wchar_t *sub) {
+    RegDeleteTreeW(HKEY_CURRENT_USER, sub);
+}
+
+static bool handleAssociation(bool install) {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
+    std::wstring cmd = L"\"";
+    cmd += exe;
+    cmd += L"\" \"%1\"";
+
+    if (install) {
+        regWrite(L"Software\\Classes\\.fbskin", nullptr, L"fbsv.skin");
+        regWrite(L"Software\\Classes\\.fbskin\\OpenWithProgids", L"fbsv.skin", L"");
+        regWrite(L"Software\\Classes\\fbsv.skin", nullptr, L"fb2km skin");
+        regWrite(L"Software\\Classes\\fbsv.skin\\DefaultIcon", nullptr, (std::wstring(L"\"") + exe + L"\",0").c_str());
+        regWrite(L"Software\\Classes\\fbsv.skin\\shell\\open\\command", nullptr, cmd.c_str());
+        regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\SupportedTypes", L".fbskin", L"");
+        regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\shell\\open\\command", nullptr, cmd.c_str());
+        printf("registered .fbskin for the current user\n");
+        printf("pick it once: right click a .fbskin -> Open with -> Choose another app\n");
+        return true;
+    }
+
+    // only take away what is still ours
+    wchar_t cur[64] = {};
+    DWORD size = sizeof(cur), type = 0;
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.fbskin", 0, KEY_READ, &key)
+        == ERROR_SUCCESS) {
+        RegQueryValueExW(key, nullptr, nullptr, &type, reinterpret_cast<LPBYTE>(cur), &size);
+        RegCloseKey(key);
+    }
+    if (wcscmp(cur, L"fbsv.skin") == 0) regDrop(L"Software\\Classes\\.fbskin");
+    else regDrop(L"Software\\Classes\\.fbskin\\OpenWithProgids");
+    regDrop(L"Software\\Classes\\fbsv.skin");
+    regDrop(L"Software\\Classes\\Applications\\fbsv.exe");
+    printf("removed the .fbskin association\n");
+    return true;
+}
+
 int main() {
     SetConsoleOutputCP(CP_UTF8);
     load_default_skins();        // needed before the skin argument is resolved
@@ -1779,6 +1838,8 @@ int main() {
         if (arg == L"--debug") { debugUrl = true; continue; }
         if (arg == L"--single") { singleInstance = true; continue; }
         if (arg == L"--top") { pinTop = true; continue; }
+        if (arg == L"--register") { handleAssociation(true); return 0; }
+        if (arg == L"--unregister") { handleAssociation(false); return 0; }
         if (!arg.empty() && arg[0] == L'-') continue;      // unknown switch
         args.push_back(fs::path(arg));
     }

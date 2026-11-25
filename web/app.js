@@ -1757,6 +1757,110 @@ const AUDIO_FILE = /\.(flac|mp3|m4a|mp4|aac|ogg|opus|wav|wv)$/i;
 const PLAYLIST_FILE = /\.(m3u|m3u8)$/i;
 
 // what a dropped file may become: a skin package, or audio at a list position
+
+// ------------------------------------------------------- dropped folders --
+// A browser hands over files, never a path, so a folder dropped on the page is
+// rebuilt here as a store-only .fbskin and handed to the same upload the file
+// picker uses. Nothing is compressed: skin payloads are mostly PNG already.
+const CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = -1;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+
+function storeZip(entries) {
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  const enc = new TextEncoder();
+  for (const { path, bytes } of entries) {
+    const name = enc.encode(path);
+    const crc = crc32(bytes);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);         // version needed
+    local.setUint16(6, 0x0800, true);     // UTF-8 names
+    local.setUint16(8, 0, true);          // stored
+    local.setUint16(10, 0, true);         // time
+    local.setUint16(12, 0x21, true);      // date (1996-01-01, fixed)
+    local.setUint32(14, crc, true);
+    local.setUint32(18, bytes.length, true);
+    local.setUint32(22, bytes.length, true);
+    local.setUint16(26, name.length, true);
+    local.setUint16(28, 0, true);
+    chunks.push(new Uint8Array(local.buffer), name, bytes);
+
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0x0800, true);
+    cd.setUint16(10, 0, true);
+    cd.setUint16(12, 0, true);
+    cd.setUint16(14, 0x21, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, bytes.length, true);
+    cd.setUint32(24, bytes.length, true);
+    cd.setUint16(28, name.length, true);
+    cd.setUint32(42, offset, true);
+    central.push(new Uint8Array(cd.buffer), name);
+    offset += 30 + name.length + bytes.length;
+  }
+  let cdSize = 0;
+  for (const part of central) cdSize += part.length;
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, cdSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...chunks, ...central, new Uint8Array(end.buffer)],
+                  { type: "application/zip" });
+}
+
+// walk a dropped directory, remembering each file's path inside it
+function collectEntry(entry, prefix, out) {
+  return new Promise((resolve) => {
+    if (!entry) return resolve();
+    if (entry.isFile) {
+      entry.file((f) => { out.push({ path: prefix + entry.name, file: f }); resolve(); }, () => resolve());
+      return;
+    }
+    if (!entry.isDirectory) return resolve();
+    const reader = entry.createReader();
+    const more = () => reader.readEntries(async (batch) => {
+      if (!batch.length) return resolve();
+      for (const e of batch) await collectEntry(e, prefix + entry.name + "/", out);
+      more();
+    }, () => resolve());
+    more();
+  });
+}
+
+async function uploadDroppedFolder(dirEntry) {
+  const found = [];
+  await collectEntry(dirEntry, "", found);
+  const ours = found.filter((x) => !/(^|\/)\.|__MACOSX|Thumbs\.db$/i.test(x.path));
+  if (!ours.length) { toast(tr("msg.unsupported")); return; }
+  const entries = [];
+  for (const item of ours) {
+    const bytes = new Uint8Array(await item.file.arrayBuffer());
+    entries.push({ path: item.path, bytes });
+  }
+  const blob = storeZip(entries);
+  await uploadSkin(new File([blob], (dirEntry.name || "dropped") + ".fbskin"));
+}
+
 async function dropFiles(files, at) {
   const pkg = files.find((f) => /\.(fbskin|zip)$/i.test(f.name));
   if (pkg) { await uploadSkin(pkg); return; }
@@ -1816,8 +1920,12 @@ function wireOpening() {
   });
 
   window.addEventListener("dragover", (e) => { e.preventDefault(); });
-  window.addEventListener("drop", (e) => {
+  window.addEventListener("drop", async (e) => {
     e.preventDefault();
+    const items = [...(e.dataTransfer ? e.dataTransfer.items : [])];
+    const dir = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry())
+                     .find((en) => en && en.isDirectory);
+    if (dir) { await uploadDroppedFolder(dir); return; }
     const files = [...(e.dataTransfer ? e.dataTransfer.files : [])];
     if (files.length) dropFiles(files, null);
   });
