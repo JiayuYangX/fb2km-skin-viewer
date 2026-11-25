@@ -2139,6 +2139,27 @@ function applyTheme() {
   }
 }
 
+
+// The address always describes what is on screen, so copying it reproduces the
+// view. replaceState keeps the back button meaning "leave" rather than "undo".
+function syncUrl() {
+  const q = new URLSearchParams();
+  q.set("theme", state.theme);
+  q.set("lang", state.lang);
+  q.set("sim", state.simStatus ? "1" : "0");
+  q.set("follow", state.deviceFollow ? "1" : "0");
+  if (!state.deviceFollow && state.deviceW && state.deviceH) {
+    q.set("dev", state.deviceW + "x" + state.deviceH);
+  }
+  if (state.statusBarH) q.set("statusH", String(state.statusBarH));
+  if (state.skin) q.set("skin", state.skin);
+  if (state.layout) q.set("layout", state.layout);
+  const next = location.pathname + "?" + q.toString();
+  if (next !== location.pathname + location.search) {
+    history.replaceState(null, "", next);
+  }
+}
+
 function wirePrefs() {
   state.lang = pickLang();
   const wantLang = new URLSearchParams(location.search).get("lang");
@@ -2156,6 +2177,7 @@ function wirePrefs() {
     ls.addEventListener("change", () => {
       state.lang = ls.value === "zh" ? "zh" : "en";
       localStorage.setItem("lang", state.lang);
+      syncUrl();
       applyLang();
       applyTheme();
     });
@@ -2165,6 +2187,7 @@ function wirePrefs() {
     const next = THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length];
     state.theme = next;
     localStorage.setItem("theme", next);
+    syncUrl();
     applyTheme();
   });
 
@@ -2180,6 +2203,8 @@ function wirePrefs() {
   state.deviceH = parseInt(localStorage.getItem("deviceH") || "0", 10) || 0;
   if (q.get("sim") === "1") state.simStatus = true;
   if (q.get("sim") === "0") state.simStatus = false;
+  if (q.get("follow") === "1") state.deviceFollow = true;
+  if (q.get("follow") === "0") state.deviceFollow = false;
   const askedDev = q.get("dev");                 // ?dev=1080x1920
   if (askedDev && /^\d+x\d+$/.test(askedDev)) {
     const parts = askedDev.split("x").map(Number);
@@ -2194,6 +2219,7 @@ function wirePrefs() {
     sb.addEventListener("change", () => {
       state.simStatus = sb.checked;
       localStorage.setItem("simStatus", sb.checked ? "1" : "0");
+      syncUrl();
       render();
     });
   }
@@ -2203,10 +2229,13 @@ function wirePrefs() {
     fs.addEventListener("change", () => {
       state.deviceFollow = fs.checked;
       localStorage.setItem("deviceFollow", fs.checked ? "1" : "0");
+      syncUrl();
       render();
     });
   }
   state.statusBarH = parseInt(localStorage.getItem("statusBarH") || "0", 10) || 0;   // 0: work it out
+  const askedH = parseInt(q.get("statusH") || "", 10);
+  if (askedH > 0) state.statusBarH = Math.max(8, Math.min(600, askedH));
   const sw = $("status-h");
   if (sw) {
     const applyHeight = (rewrite) => {
@@ -2216,6 +2245,7 @@ function wirePrefs() {
       if (next === state.statusBarH && !rewrite) return;
       state.statusBarH = next;
       localStorage.setItem("statusBarH", String(next));
+      syncUrl();
       render();
     };
     sw.addEventListener("input", () => applyHeight(false));
@@ -2230,6 +2260,7 @@ function wirePrefs() {
     state.deviceW = w; state.deviceH = h;
     localStorage.setItem("deviceW", String(w));
     localStorage.setItem("deviceH", String(h));
+    syncUrl();
     render();
   };
   if (dw) dw.addEventListener("change", readDims);
@@ -2418,6 +2449,7 @@ function fillLayouts() {
   state.layout = (asked && names.includes(asked)) ? asked
     : (remembered && names.includes(remembered)) ? remembered : names[0];
   sel.value = state.layout;
+  syncUrl();
 }
 
 // ------------------------------------------------------------------- wiring --
@@ -2425,6 +2457,7 @@ $("skin").addEventListener("change", (e) => { state.skin = e.target.value; fillL
 $("layout").addEventListener("change", (e) => {
   state.layout = e.target.value;
   localStorage.setItem("layout:" + state.skin, state.layout);
+  syncUrl();
   render();
 });
     window.addEventListener("resize", () => { render(); refit(); });
