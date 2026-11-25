@@ -884,7 +884,9 @@ static string fields_json(const Media &m, const fs::path &file) {
     put("codec_profile", "");
     put("codec_long", m.container);
     put("samplerate", m.rate ? std::to_string(m.rate) : "");
-    put("bitrate", m.bitrate ? std::to_string(m.bitrate) : "");
+    // [bitrate] carries its unit, which is what the default skins print; the
+    // title formatting field stays a bare number, and skins append their own
+    put("bitrate", m.bitrate ? std::to_string(m.bitrate) + " kbps" : "");
     put("__bitrate", m.bitrate ? std::to_string(m.bitrate) : "");
     put("bitspersample", m.bits ? std::to_string(m.bits) : "");
     put("__bitspersample", m.bits ? std::to_string(m.bits) : "");
