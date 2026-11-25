@@ -451,6 +451,13 @@ function parseArm(lines, def, mode, overrides) {
       const which = (lines[i + 2] || "").trim().toLowerCase();
       if (b && (which === "main" || which === "next")) {
         els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3], next: which === "next" });
+      } else if (b && (which === "mainback" || which === "mainmirrored")) {
+        // The old designer's two extra types. The 2.x app drops both, so these are
+        // only here for skins written against 1.x: mainback is drawn plainly (the
+        // 1.6.9 app does not zoom or dim it either, whatever the old notes say)
+        // and mainmirrored is flipped upside down.
+        els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3],
+                   next: false, mirror: which === "mainmirrored" });
       }
       i += 3; continue;
     }
@@ -837,6 +844,9 @@ function render() {
       // broken-image frame. An <img> paints perfectly well; the flicker this
       // used to show was the frame swap, which render() now holds back.
       el = document.createElement("div");
+      // the old mirrored type is the same picture turned upside down, which is
+      // all the 1.6.9 app does with it
+      if (e.mirror) el.style.transform = "scaleY(-1)";
       // the placeholder is whatever the skin names and nothing else: a skin that
       // names none shows an empty square, which is what the device does
       const fallback = imgURL(skin, skin.def.defaultart);
