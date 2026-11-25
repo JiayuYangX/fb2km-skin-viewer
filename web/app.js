@@ -2142,16 +2142,38 @@ function applyTheme() {
 
 // The address always describes what is on screen, so copying it reproduces the
 // view. replaceState keeps the back button meaning "leave" rather than "undo".
+// what the canvas is actually made of, in the same terms the address uses
+function shownDevice() {
+  const skin = skins.get(state.skin);
+  const L = skin && state.layout ? skin.layouts[state.layout] : null;
+  const fallbackW = (L && L.w) || 1080;
+  const fallbackH = (L && L.h) || 2400;
+  return {
+    w: state.deviceFollow ? fallbackW : Math.max(120, state.deviceW || fallbackW),
+    h: state.deviceFollow ? fallbackH : Math.max(120, state.deviceH || fallbackH),
+  };
+}
+
+function shownStatusHeight() {
+  const d = shownDevice();
+  const automatic = Math.max(8, Math.round(Math.min(d.w, d.h) / 15));
+  return state.deviceFollow ? automatic : (state.statusBarH || automatic);
+}
+
 function syncUrl() {
   const q = new URLSearchParams();
-  q.set("theme", state.theme);
-  q.set("lang", state.lang);
-  q.set("sim", state.simStatus ? "1" : "0");
-  q.set("follow", state.deviceFollow ? "1" : "0");
-  if (!state.deviceFollow && state.deviceW && state.deviceH) {
-    q.set("dev", state.deviceW + "x" + state.deviceH);
-  }
-  if (state.statusBarH) q.set("statusH", String(state.statusBarH));
+  // dev carries the whole follow switch, so there is no separate flag to keep in
+  // step with it
+  q.set("dev", state.deviceFollow
+    ? "auto"
+    : (state.deviceW && state.deviceH ? state.deviceW + "x" + state.deviceH
+                                      : (() => { const d = shownDevice(); return d.w + "x" + d.h; })()));
+  // the height only shows while the size is manual: under dev=auto it is worked
+  // out from the size and would only be noise
+  if (!state.deviceFollow) q.set("st", String(shownStatusHeight()));
+  if (state.simStatus) q.set("bar", "1");
+  if (state.theme && state.theme !== "auto") q.set("theme", state.theme);
+  if (state.lang) q.set("lang", state.lang);
   if (state.skin) q.set("skin", state.skin);
   if (state.layout) q.set("layout", state.layout);
   const next = location.pathname + "?" + q.toString();
@@ -2161,11 +2183,22 @@ function syncUrl() {
 }
 
 function wirePrefs() {
+  // Three things stay apart here. A value in the address is a one-off instruction
+  // applied while loading; the address is then kept in step with what is on screen;
+  // and whatever the address cannot express simply lives inside the page.
+  const q = new URLSearchParams(location.search);
+  const OURS = ["dev", "st", "bar", "sim", "theme", "lang", "skin", "layout"];
+  // an address that says anything at all describes the whole view, so a copied
+  // address always reproduces the same screen; only a bare address falls back to
+  // what this copy of the page used last time
+  const fromUrl = OURS.some((k) => q.has(k));
+
   state.lang = pickLang();
-  const wantLang = new URLSearchParams(location.search).get("lang");
+  const wantLang = q.get("lang");
   if (wantLang === "zh" || wantLang === "en") state.lang = wantLang;
-  state.theme = localStorage.getItem("theme") || "auto";
-  const forced = new URLSearchParams(location.search).get("theme");
+  else if (!fromUrl) state.lang = localStorage.getItem("lang") || state.lang;
+  state.theme = fromUrl ? "auto" : (localStorage.getItem("theme") || "auto");
+  const forced = q.get("theme");
   if (forced && THEMES.includes(forced)) state.theme = forced;   // handy for screenshots
   if (!THEMES.includes(state.theme)) state.theme = "auto";
   applyTheme();
@@ -2191,27 +2224,30 @@ function wirePrefs() {
     applyTheme();
   });
 
-  // the status bar preview: off unless asked for, remembered like the theme
-  state.simStatus = localStorage.getItem("simStatus") === "1";
-  const askedSim = new URLSearchParams(location.search).get("sim");
-  if (askedSim === "1") state.simStatus = true;
-  if (askedSim === "0") state.simStatus = false;
-  const q = new URLSearchParams(location.search);
-  state.simStatus = localStorage.getItem("simStatus") === "1";
-  state.deviceFollow = localStorage.getItem("deviceFollow") !== "0";
-  state.deviceW = parseInt(localStorage.getItem("deviceW") || "0", 10) || 0;
-  state.deviceH = parseInt(localStorage.getItem("deviceH") || "0", 10) || 0;
-  if (q.get("sim") === "1") state.simStatus = true;
-  if (q.get("sim") === "0") state.simStatus = false;
-  if (q.get("follow") === "1") state.deviceFollow = true;
-  if (q.get("follow") === "0") state.deviceFollow = false;
-  const askedDev = q.get("dev");                 // ?dev=1080x1920
-  if (askedDev && /^\d+x\d+$/.test(askedDev)) {
-    const parts = askedDev.split("x").map(Number);
-    state.deviceW = parts[0];
-    state.deviceH = parts[1];
+  state.simStatus = fromUrl ? false : localStorage.getItem("simStatus") === "1";
+  state.deviceFollow = fromUrl ? true : localStorage.getItem("deviceFollow") !== "0";
+  state.deviceW = fromUrl ? 0 : (parseInt(localStorage.getItem("deviceW") || "0", 10) || 0);
+  state.deviceH = fromUrl ? 0 : (parseInt(localStorage.getItem("deviceH") || "0", 10) || 0);
+  state.statusBarH = fromUrl ? 0 : (parseInt(localStorage.getItem("statusBarH") || "0", 10) || 0);
+
+  // dev is the one switch behind "follow the layout": auto, a size, or silence
+  const dev = q.get("dev");
+  if (dev === "auto") {
+    state.deviceFollow = true;
+  } else if (dev && /^\d+x\d+$/.test(dev)) {
+    const [w, h] = dev.split("x").map(Number);
     state.deviceFollow = false;
+    state.deviceW = Math.max(120, Math.min(8000, w));
+    state.deviceH = Math.max(120, Math.min(8000, h));
   }
+  // st is a one-off too: auto works the height out again, a number sets it. It has
+  // no say in whether the size follows, so dev=auto&st=100 keeps the 100 in hand
+  const st = q.get("st");
+  if (st === "auto") state.statusBarH = 0;
+  else if (st && parseInt(st, 10) > 0) state.statusBarH = Math.max(8, Math.min(600, parseInt(st, 10)));
+  const bar = q.get("bar") !== null ? q.get("bar") : q.get("sim");   // sim is the older name
+  if (bar === "1") state.simStatus = true;
+  if (bar === "0") state.simStatus = false;
 
   const sb = $("sim-status");
   if (sb) {
@@ -2233,15 +2269,15 @@ function wirePrefs() {
       render();
     });
   }
-  state.statusBarH = parseInt(localStorage.getItem("statusBarH") || "0", 10) || 0;   // 0: work it out
-  const askedH = parseInt(q.get("statusH") || "", 10);
-  if (askedH > 0) state.statusBarH = Math.max(8, Math.min(600, askedH));
   const sw = $("status-h");
   if (sw) {
     const applyHeight = (rewrite) => {
-      // an empty field goes back to the automatic height
+      // clearing the field works the height out once and keeps the number: the
+      // page has no hidden "automatic" mode to fall back into
+      const fallback = Math.max(8, Math.round(Math.min(state.deviceW || 1080,
+                                                       state.deviceH || 2400) / 15));
       const typed = parseInt(sw.value, 10);
-      const next = sw.value.trim() === "" || !typed ? 0 : Math.max(8, Math.min(600, typed));
+      const next = sw.value.trim() === "" || !typed ? fallback : Math.max(8, Math.min(600, typed));
       if (next === state.statusBarH && !rewrite) return;
       state.statusBarH = next;
       localStorage.setItem("statusBarH", String(next));
