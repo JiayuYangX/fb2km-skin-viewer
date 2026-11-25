@@ -91,6 +91,23 @@ const fitCanvas = document.createElement("canvas").getContext("2d");
 
 // the text is measured on a canvas: once a label is ellipsized its laid-out
 // width is the clipped one, so the DOM cannot tell us it is still too wide
+// the artwork fills its box's width and keeps its own height; only when that
+// height would overrun the box is it squeezed, never stretched. That needs the
+// picture's own size, which arrives asynchronously, so it is cached here and the
+// element is re-measured once it is known.
+const artSizes = new Map();
+function artSize(url, onKnown) {
+  const known = artSizes.get(url);
+  if (known) return known;
+  const img = new Image();
+  img.onload = () => {
+    artSizes.set(url, { w: img.naturalWidth, h: img.naturalHeight });
+    if (onKnown) onKnown();
+  };
+  img.src = url;
+  return null;
+}
+
 // how light a skin's background is decides whether the bar reads dark or light
 function luminanceOf(colour) {
   const text = String(colour || "").trim();
@@ -616,11 +633,11 @@ function render() {
   // it is still unset does the layout suggest one (the short side's fifteenth)
   const autoStatus = Math.max(8, Math.round(Math.min(deviceW, deviceH) / 15));
   const statusDev = sim ? (state.statusBarH > 0 ? state.statusBarH : autoStatus) : 0;
-  // The skin always fills the width; the height is only ever squeezed to fit.
-  // A screen taller than the layout needs leaves the rest empty instead of
-  // stretching the skin over it, which is what the device does.
+  // The skin is stretched over the screen in both directions: the phone maps the
+  // layout's width onto the screen's width and its height onto the height left
+  // under the status bar, whatever that does to the proportions
   const sx = deviceW / skinW;
-  const sy = Math.min(sx, Math.max(1, deviceH - statusDev) / skinH);
+  const sy = Math.max(1, deviceH - statusDev) / skinH;
   const kx = sx * k;
   const ky = sy * k;
   const offY = statusDev * k;
@@ -735,11 +752,19 @@ function render() {
       const shown = none ? null : (src || fallback);
       if (shown) {
         el.style.backgroundImage = 'url("' + shown + '")';
-        // the picture fills its box even when the frame squeezes the skin, which
-        // is what the device does with the artwork too
-        el.style.backgroundSize = "100% 100%";
         el.style.backgroundPosition = "center";
         el.style.backgroundRepeat = "no-repeat";
+        const boxW = e.w * kx, boxH = e.h * ky;
+        // width first, the picture's own height after; squeeze only if it would
+        // overflow the box, which is what the phone does with a frame too short
+        const fitArt = (url) => {
+          const size = artSize(url, () => {
+            if (el.style.backgroundImage.indexOf(url) >= 0) fitArt(url);
+          });
+          if (!size) return "100% auto";                 // unknown yet: keep the shape
+          return size.h * (boxW / size.w) > boxH + 0.5 ? "100% 100%" : "100% auto";
+        };
+        el.style.backgroundSize = fitArt(shown);
       }
       if (e.next) state.artNextEl = el; else state.artEl = el;
 
@@ -792,18 +817,21 @@ function render() {
             el.appendChild(played);
 
             const knob = document.createElement("div");
-            const knobSize = e.knob ? e.h * ky : 0;
-            if (paint(knob, e.knob, "contain")) {
-              // the marker slides over the distance the strip leaves free, so it
-              // never hangs past either end of it
-              const travel = Math.max(0, (e.w * kx) - knobSize);
+            // the marker is stretched with the skin, so a square picture turns
+            // into an ellipse on a screen whose two scales differ
+            const knobW = e.knob ? e.h * kx : 0;
+            const knobH = e.knob ? e.h * ky : 0;
+            if (paint(knob, e.knob, "100% 100%")) {
+              // it slides over the distance the strip leaves free, so it never
+              // hangs past either end of it
+              const travel = Math.max(0, (e.w * kx) - knobW);
               knob.style.position = "absolute";
-              knob.style.top = ((mid * ky) - (knobSize / 2)) + "px";
+              knob.style.top = ((mid * ky) - (knobH / 2)) + "px";
               knob.style.left = Math.round(state.pos * travel) + "px";
-              knob.style.width = knobSize + "px";
-              knob.style.height = knobSize + "px";
+              knob.style.width = knobW + "px";
+              knob.style.height = knobH + "px";
               el.appendChild(knob);
-              state.posUI = { played, knob, d: knobSize, travel };
+              state.posUI = { played, knob, d: knobW, travel };
             } else {
               state.posUI = { played, knob: null, d: 0, travel: 0 };
             }
