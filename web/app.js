@@ -422,22 +422,26 @@ function parseArm(lines, def, mode, overrides) {
       const b = box(lines[i + 1]);
       const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
       const knob = png(lines[i + 2]), bar = png(lines[i + 3]), barHot = png(lines[i + 4]);
-      if (b && knob && bar && barHot) {
-        els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3], knob, bar, barHot });
+      // a probe row by row: only the inactive picture is required; without it the
+      // phone draws nothing, while a junk knob or active picture is simply skipped
+      if (b && bar) {
+        els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3],
+                   knob, bar, barHot: barHot || bar });
       }
       i += 5; continue;
     }
     if (line === "[button]") {
       const b = box(lines[i + 1]);
       const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
-      // a button is seven lines: box, action and four pictures. The device drops
-      // one that does not carry all four rather than drawing half of it
+      // a button is seven lines: box, action and four pictures
       const src = png(lines[i + 3]), hot = png(lines[i + 4]);
       const src2 = png(lines[i + 5]), hot2 = png(lines[i + 6]);
-      if (b && src && hot && src2 && hot2) {
+      // the same probe: only the resting picture is required, so a button whose
+      // other three are junk still draws; the missing ones fall back to it
+      if (b && src) {
         els.push({ t: "btn", x: b[0], y: b[1], w: b[2], h: b[3],
                    action: (lines[i + 2] || "").trim(),
-                   src, hot, src2, hot2 });
+                   src, hot: hot || src, src2: src2 || src, hot2: hot2 || hot || src });
       }
       i += 7; continue;
     }
@@ -778,7 +782,10 @@ function render() {
         el.style.backgroundImage = 'url("' + shown + '")';
         el.style.backgroundPosition = "center";
         el.style.backgroundRepeat = "no-repeat";
-        const boxW = e.w * kx, boxH = e.h * ky;
+        // the decision is made in the device's own pixels, not the display's:
+        // the phone floors the box height there, and a scaled-down preview must
+        // not change the answer
+        const boxW = e.w * sx, boxH = e.h * sy;
         // width first, the picture's own height after; squeeze only if it would
         // overflow the box, which is what the phone does with a frame too short
         const fitArt = (url) => {
@@ -790,7 +797,15 @@ function render() {
             }
           });
           if (!size) return "100% auto";                 // unknown yet: keep the shape
-          return size.h * (boxW / size.w) > boxH + 0.5 ? "100% 100%" : "100% auto";
+          const scaledH = size.h * (boxW / size.w);
+          if (scaledH <= boxH + 0.5) return "100% auto";  // shorter than the box: keep the shape
+          // A box within five percent of the picture's shape is squashed to fill
+          // it; a box further off keeps the picture's shape and is centred. The
+          // phone's own border sits somewhere between 4.6 and 5 percent and its
+          // exact rule is not pinned down; five percent is the simpler choice
+          // until the app's own code has been read. It floors the box height
+          // before comparing (a 457.92 box behaves like 457, while 458 fills).
+          return Math.floor(boxH) / scaledH >= 0.95 ? "100% 100%" : "contain";
         };
         el.style.backgroundSize = fitArt(shown);
       }
@@ -845,10 +860,25 @@ function render() {
             el.appendChild(played);
 
             const knob = document.createElement("div");
-            // the marker is stretched with the skin, so a square picture turns
-            // into an ellipse on a screen whose two scales differ
-            const knobW = e.knob ? e.h * kx : 0;
+            // The phone draws the marker at the picture's own pixel width scaled by
+            // kx, and at the bar's full height: a 200x200 marker in a 1000x90 bar
+            // came out 200 wide and 90 tall, and the default skin's 140x140 one
+            // came out 67 by 84 on a 1080 wide screen.
+            const knobURL = posImage(e.knob);
             const knobH = e.knob ? e.h * ky : 0;
+            const knobW = e.knob ? (artSize(knobURL) ? artSize(knobURL).w * kx : knobH) : 0;
+            const refit = () => {
+              const size = artSize(knobURL);
+              if (!size) return;
+              const w = size.w * kx;
+              knob.style.width = w + "px";
+              if (state.posUI && state.posUI.knob === knob) {
+                state.posUI.d = w;
+                state.posUI.travel = Math.max(0, (e.w * kx) - w);
+                knob.style.left = Math.round(state.pos * state.posUI.travel) + "px";
+              }
+            };
+            if (!artSize(knobURL)) artSize(knobURL, refit);
             if (paint(knob, e.knob, "100% 100%")) {
               // it slides over the distance the strip leaves free, so it never
               // hangs past either end of it
