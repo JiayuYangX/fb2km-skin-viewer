@@ -893,7 +893,10 @@ function render() {
           // before comparing (a 457.92 box behaves like 457, while 458 fills).
           return Math.floor(boxH) / scaledH >= 0.95 ? "100% 100%" : "contain";
         };
-        el.style.backgroundSize = fitArt(shown);
+        // a reflection is the whole picture squashed into the strip below the main
+        // art: keeping its shape would leave a small square and no reflection at
+        // all, so the mirrored type always fills its box
+        el.style.backgroundSize = e.mirror ? "100% 100%" : fitArt(shown);
       }
       if (e.next) state.artNextEl = el; else state.artEl = el;
 
