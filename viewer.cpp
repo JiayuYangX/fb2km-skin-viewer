@@ -1012,6 +1012,9 @@ static bool apply_inputs(Session &sess, const fs::path &skin,
     if (!skin.empty()) {
         if (!open_skin_path(sess, skin, err)) return false;
         logline("skin    %s", utf8(sess.root.filename().wstring()).c_str());
+    } else if (!sess.sources.empty()) {
+        // the built in skins are loaded just the same, and say so
+        logline("skin    %s (built in)", sess.sources[sess.active].label.c_str());
     }
     for (const auto &in : inputs) {
         if (is_playlist(in)) {
@@ -1685,6 +1688,10 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         respond(c, "200 OK", "image/png", read_resource(L"APP_ICON_PNG"), "", true);
     } else if (route.rfind("/brand.png", 0) == 0) {
         respond(c, "200 OK", "image/png", read_resource(L"BRAND_PNG"), "", true);
+    } else if (route.rfind("/api/log", 0) == 0) {
+        const string msg = query_value(target, "msg");
+        if (!msg.empty()) logline("%s", msg.c_str());
+        respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
     } else if (route.rfind("/api/forward", 0) == 0) {
         // a later launch reaches this with the paths it was handed, and nothing
         // else; it goes through the same call the first launch uses

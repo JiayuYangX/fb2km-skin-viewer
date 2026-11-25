@@ -449,6 +449,13 @@ function parseArm(lines, def, mode, overrides) {
       }
       i += 7; continue;
     }
+    if (line === "[frame]") {
+      // the old designer's hollow rectangle: one pixel of colour around the box
+      const c = resolveColour(lines[i + 1], def);
+      const b = box(lines[i + 2]);
+      if (c && b) els.push({ t: "frame", x: b[0], y: b[1], w: b[2], h: b[3], c });
+      i += 3; continue;
+    }
     if (line === "[line]") {
       const c = resolveColour(lines[i + 1], def);
       const parts = String(lines[i + 2] || "").split(",").map(Number);
@@ -457,6 +464,15 @@ function parseArm(lines, def, mode, overrides) {
         els.push({ t: "line", x: x1, y: y1, w: x2 - x1, h: Math.max(1, y2 - y1), c });
       }
       i += 3; continue;
+    }
+    if (line.startsWith("[")) {
+      // an element this viewer does not know: skip the whole block, guessing how
+      // many lines it owns, and tell the console rather than the screen
+      const name = line.trim();
+      (state.unknown || (state.unknown = new Set())).add(name);
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("[")) i++;
+      continue;
     }
     i++;
   }
@@ -713,7 +729,12 @@ function render() {
       buf.appendChild(node);
     };
 
-    if (e.t === "rect" || e.t === "line") {
+    if (e.t === "frame") {
+      el = document.createElement("div");
+      el.style.background = "transparent";
+      el.style.border = Math.max(1, Math.round(kx)) + "px solid " + e.c;
+      el.style.boxSizing = "border-box";
+    } else if (e.t === "rect" || e.t === "line") {
       el = document.createElement("div");
       el.style.background = e.c;
 
@@ -2417,6 +2438,12 @@ async function loadSkin() {
         const decl = decls.find((d) => d.file === n);
         entry.layouts[n] = parseLayout(dec16(await r.arrayBuffer()), entry.def, decl);
       } catch (e) { /* skip */ }
+    }
+    // an element the viewer does not know is worth one line in the console, once
+    if (state.unknown && state.unknown.size) {
+      const names = [...state.unknown].join(" ");
+      state.unknown.clear();
+      fetch("/api/log?msg=" + encodeURIComponent("layout  not drawn " + names)).catch(() => {});
     }
     // pull every picture in once: the server may be gone later, and a button that
     // has to fetch its other state would fall back to a broken image
