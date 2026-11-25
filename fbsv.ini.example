@@ -23,4 +23,4 @@
 # the skin's first subskin is used. ratio from the skin: WxH declaration.
 #layout = 9:16
 #layout = 4:3
-#layout-tolerance = 15          ; percent; how close counts as the same shape
+#tolerance = 15                 ; percent; how close counts as the same shape

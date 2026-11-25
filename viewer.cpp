@@ -246,7 +246,7 @@ static void usage() {
     printf("  %-22s %s\n", "--top", "keep the window on top");
     printf("  %-22s %s\n", "--debug", "open with ?debug in the address");
     printf("  %-22s %s\n", "fbsv.ini", "settings beside the exe: dev, status, bar, theme, lang,");
-    printf("  %-22s %s\n", "", "port, single, open, debug, top, layout, layout-tolerance");
+    printf("  %-22s %s\n", "", "port, single, open, debug, top, layout, tolerance");
     printf("  %-22s %s\n", "--register", "add .fbskin to the Open with list");
     printf("  %-22s %s\n", "--unregister", "remove it again");
     printf("\n%s\n", bold("view").c_str());
@@ -521,7 +521,7 @@ static void load_config() {
         };
         if (key == "layout") {
             if (!val.empty()) g_cfg.layouts.push_back(val);
-        } else if (key == "layout-tolerance") {
+        } else if (key == "tolerance") {
             char *end = nullptr;
             const double d = std::strtod(val.c_str(), &end);
             if (end && !*end && d >= 0) g_cfg.tolerance = d;
