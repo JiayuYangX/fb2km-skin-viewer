@@ -39,6 +39,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <regex>
 #include <zlib.h>
 
 
@@ -241,6 +242,16 @@ static void usage() {
     printf("  %-22s %s\n", "--debug", "open with ?debug in the address");
     printf("  %-22s %s\n", "--register", "add .fbskin to the Open with list");
     printf("  %-22s %s\n", "--unregister", "remove it again");
+    printf("\n%s\n", bold("view").c_str());
+    printf("  %-22s %s\n", "-s, --skin <path>", "open this as the skin, whatever it looks like");
+    printf("  %-22s %s\n", "-a, --audio <path>", "queue this as a track (may repeat)");
+    printf("  %-22s %s\n", "-l, --list <path>", "queue this playlist (may repeat)");
+    printf("  %-22s %s\n", "--dev auto|WxH", "follow the layout's size, or fix the screen");
+    printf("  %-22s %s\n", "--st auto|px", "work the status bar height out, or set it");
+    printf("  %-22s %s\n", "--bar 0|1", "draw the status bar");
+    printf("  %-22s %s\n", "--theme auto|dark|light", "colour scheme");
+    printf("  %-22s %s\n", "--lang zh|en", "interface language");
+    printf("  %-22s %s\n", "--layout <file>", "which layout of the skin");
     printf("\n%s\n", dim("examples").c_str());
     printf("  fbsv skin.fbskin                open a package\n");
     printf("  fbsv %s\n", "fb2km-skin.Eclipse\\dark");
@@ -2120,8 +2131,33 @@ int main() {
     bool portGiven = false;
     int explicitPort = 0;
     std::vector<fs::path> args;
-    for (int i = 1; i < argc; i++) {
+    fs::path skinFlag;                       // --skin beats the sniffing
+    std::vector<fs::path> audioFlag, listFlag;
+    string uiQuery;                          // the view half of the address
+    bool literal = false;                    // after --, nothing is a switch
+    int i = 1;                               // the loop index, shared with the lambdas
+
+    auto value = [&](const wchar_t *name) -> std::wstring {
+        if (i + 1 >= argc) {
+            fprintf(stderr, "%s needs a value\n", utf8(std::wstring(name)).c_str());
+            std::exit(2);
+        }
+        return argvw[++i];
+    };
+    auto wrongValue = [&](const char *what, const std::wstring &got) -> int {
+        fprintf(stderr, "%s: %s\n", what, utf8(got).c_str());
+        fprintf(stderr, "try fbsv --help\n");
+        return 2;
+    };
+    auto addUi = [&](const string &pair) {
+        if (!uiQuery.empty()) uiQuery += "&";
+        uiQuery += pair;
+    };
+
+    for (; i < argc; i++) {
         std::wstring arg = argvw[i];
+        if (literal) { args.push_back(fs::path(arg)); continue; }
+        if (arg == L"--") { literal = true; continue; }
         if (arg == L"-h" || arg == L"--help" || arg == L"-?") { usage(); return 0; }
         if (arg == L"-V" || arg == L"--version") { printf("fbsv %s\n", kVersion); return 0; }
         if (arg == L"--no-open") { openBrowser = false; continue; }
@@ -2129,9 +2165,50 @@ int main() {
         if (arg == L"--single") { singleInstance = true; continue; }
         if (arg == L"--top") { pinTop = true; continue; }
         if (arg == L"--new") { forceNew = true; continue; }
-        if (arg == L"--port" && i + 1 < argc) { explicitPort = _wtoi(argvw[++i]); portGiven = true; continue; }
+        if (arg == L"--port") { explicitPort = _wtoi(value(L"--port").c_str()); portGiven = true; continue; }
         if (arg == L"--register") { handleAssociation(true); return 0; }
         if (arg == L"--unregister") { handleAssociation(false); return 0; }
+
+        // the view flags: they only ever become the query of the address
+        if (arg == L"-s" || arg == L"--skin") { skinFlag = fs::path(value(L"--skin")); continue; }
+        if (arg == L"-a" || arg == L"--audio") { audioFlag.push_back(fs::path(value(L"--audio"))); continue; }
+        if (arg == L"-l" || arg == L"--list") { listFlag.push_back(fs::path(value(L"--list"))); continue; }
+        if (arg == L"--dev") {
+            const std::wstring v = value(L"--dev");
+            const bool autoDev = v == L"auto";
+            const bool size = std::regex_match(v, std::wregex(L"[0-9]+x[0-9]+"));
+            if (!autoDev && !size) return wrongValue("--dev wants auto or WxH", v);
+            addUi("dev=" + utf8(v));
+            continue;
+        }
+        if (arg == L"--st" || arg == L"--status-h") {
+            const std::wstring v = value(L"--st");
+            const bool autoSt = v == L"auto";
+            const bool number = std::regex_match(v, std::wregex(L"[0-9]+"));
+            if (!autoSt && !number) return wrongValue("--st wants auto or a number", v);
+            addUi("st=" + utf8(v));
+            continue;
+        }
+        if (arg == L"--bar") {
+            const std::wstring v = value(L"--bar");
+            if (v != L"0" && v != L"1") return wrongValue("--bar wants 0 or 1", v);
+            addUi("bar=" + utf8(v));
+            continue;
+        }
+        if (arg == L"--theme") {
+            const std::wstring v = value(L"--theme");
+            if (v != L"auto" && v != L"dark" && v != L"light") return wrongValue("--theme wants auto, dark or light", v);
+            addUi("theme=" + utf8(v));
+            continue;
+        }
+        if (arg == L"--lang") {
+            const std::wstring v = value(L"--lang");
+            if (v != L"zh" && v != L"en") return wrongValue("--lang wants zh or en", v);
+            addUi("lang=" + utf8(v));
+            continue;
+        }
+        if (arg == L"--layout") { addUi("layout=" + query_escape(utf8(value(L"--layout")))); continue; }
+
         if (!arg.empty() && arg[0] == L'-') {
             fprintf(stderr, "unknown option: %s\n", utf8(arg).c_str());
             fprintf(stderr, "try fbsv --help\n");
@@ -2152,9 +2229,13 @@ int main() {
         }
     }
 
-    // the first argument may be the skin; anything else is music
+    // the first argument may be the skin; anything else is music. --skin says so
+    // outright, and then every positional is music
     std::vector<fs::path> inputs;
-    if (!args.empty()) {
+    if (!skinFlag.empty()) {
+        skinArg = skinFlag;
+        inputs = args;
+    } else if (!args.empty()) {
         const fs::path &first = args.front();
         bool looksLikeSkin = fs::is_directory(first) || is_playlist_ext(first) == false &&
                              (ext_of(first.filename().string()) == ".fbskin" ||
@@ -2171,6 +2252,10 @@ int main() {
         }
         (void)looksLikeSkin;
     }
+    // an explicitly named track goes ahead of whatever the positionals were, and
+    // --list keeps a playlist from being mistaken for a song
+    inputs.insert(inputs.begin(), listFlag.begin(), listFlag.end());
+    inputs.insert(inputs.begin(), audioFlag.begin(), audioFlag.end());
 
     // A later launch hands its arguments to the instance that is already serving,
     // so dragging a package onto the exe replaces the skin in the open window
@@ -2190,7 +2275,8 @@ int main() {
             if (!joined.empty()) query += "&audio=" + query_escape(joined);
             const string answer = http_call(target.port, "POST", "/api/forward?" + query);
             if (answer.find("\"ok\":true") != string::npos) {
-                const string url = "http://127.0.0.1:" + std::to_string(target.port) + "/";
+                const string url = "http://127.0.0.1:" + std::to_string(target.port) + "/" +
+                                   (uiQuery.empty() ? "" : "?" + uiQuery);
                 printf("handed to the instance already on port %d\n", target.port);
                 if (openBrowser) launch_browser(wide(url));
                 return 0;
@@ -2310,7 +2396,10 @@ int main() {
         swprintf(title, 96, L"fbsv:%d", port);
         SetConsoleTitleW(title);
     }
-    string url = "http://127.0.0.1:" + std::to_string(port) + "/" + (debugUrl ? "?debug" : "");
+    string viewQuery = uiQuery;
+    if (debugUrl) viewQuery = viewQuery.empty() ? "debug" : "debug&" + viewQuery;
+    string url = "http://127.0.0.1:" + std::to_string(port) + "/" +
+                 (viewQuery.empty() ? "" : "?" + viewQuery);
 
     printf("\n%s %s\n\n", bold("fb2km skin viewer").c_str(), kVersion);
     printf("  %s%s\n", dim("skin    ").c_str(), utf8(sess.root.wstring()).c_str());
