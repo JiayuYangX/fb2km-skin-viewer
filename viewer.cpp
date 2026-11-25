@@ -62,11 +62,81 @@
 #include <taglib/xiphcomment.h>
 #include <taglib/vorbisfile.h>
 
-#pragma comment(lib, "ws2_32.lib")
-
 namespace fs = std::filesystem;
 using std::string;
 using std::vector;
+
+// -------------------------------------------------------------------- cli --
+static const char *kVersion = "0.2.0";
+
+static bool g_vt = false;          // console understands ANSI escapes
+static bool g_verbose = false;     // --debug: also print every request
+
+static void enableVt() {
+    // colours and links only where the terminal is known to understand them;
+    // elsewhere the escapes would be printed as text
+    wchar_t scratch[64] = {};
+    const bool known = GetEnvironmentVariableW(L"WT_SESSION", scratch, 64) > 0 ||
+                       GetEnvironmentVariableW(L"TERM_PROGRAM", scratch, 64) > 0 ||
+                       GetEnvironmentVariableW(L"CONEMUANSI", scratch, 64) > 0;
+    if (!known) return;
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (out && GetConsoleMode(out, &mode) &&
+        SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+        g_vt = true;
+    }
+}
+
+// a clickable link where the terminal supports it, plain text everywhere else
+static string link(const string &text, const string &url) {
+    if (!g_vt) return text;
+    return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\";
+}
+
+static string dim(const string &text) {
+    return text;
+}
+
+static string bold(const string &text) {
+    return text;                        // plain text: colours read badly when piped
+}
+
+// one line per event, so a long running console stays readable
+static void logline(const char *fmt, ...) {
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    printf("[%02d:%02d:%02d] ", t.wHour, t.wMinute, t.wSecond);
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+    fflush(stdout);
+}
+
+static void usage() {
+    printf("%s\n", bold("fb2km skin viewer - preview foobar2000 mobile skins").c_str());
+    printf("%s\n\n", dim("usage: fbsv [options] [skin | folder] [audio ...]").c_str());
+    printf("  %-22s %s\n", "skin | folder", "a .fbskin package, a skin folder, or audio files");
+    printf("\n%s\n", bold("options").c_str());
+    printf("  %-22s %s\n", "-h, --help", "this text");
+    printf("  %-22s %s\n", "-V, --version", "print the version");
+    printf("  %-22s %s\n", "--no-open", "do not open a browser");
+    printf("  %-22s %s\n", "--single", "refuse to start if another instance runs");
+    printf("  %-22s %s\n", "--top", "keep the window on top");
+    printf("  %-22s %s\n", "--debug", "open with ?debug in the address");
+    printf("  %-22s %s\n", "--register", "add .fbskin to the Open with list");
+    printf("  %-22s %s\n", "--unregister", "remove it again");
+    printf("\n%s\n", dim("examples").c_str());
+    printf("  fbsv skin.fbskin                open a package\n");
+    printf("  fbsv %s\n", "fb2km-skin.Eclipse\\dark");
+    printf("  fbsv skin.fbskin song.flac      open a skin and queue music\n");
+}
+
+
+#pragma comment(lib, "ws2_32.lib")
+
 
 // ------------------------------------------------------------------ basics --
 static string read_file(const fs::path &p) {
@@ -1285,7 +1355,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         }
         if (body.size() > clen) body.resize(clen);
     }
-    printf("%s %s (%zu)\n", clen ? "POST" : "GET", target.c_str(), body.size());
+    if (g_verbose) printf("%s %s (%zu)\n", clen ? "POST" : "GET", target.c_str(), body.size());
     std::unique_lock<std::mutex> guard(mtx);
 
     string route = target.substr(0, target.find('?'));
@@ -1390,6 +1460,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
     } else if (route.rfind("/api/open-skin", 0) == 0) {
         string path = query_value(target, "path");
         string err;
+        logline("open   %s", path.c_str());
         if (!open_skin_path(sess, fs::path(wide(path)), err))
             respond(c, "200 OK", "application/json; charset=utf-8",
                     "{\"ok\":false,\"error\":\"" + json_escape(err) + "\"}");
@@ -1401,6 +1472,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         fs::path dest = upload_dir() / fs::path(name).filename();
         { std::ofstream f(dest, std::ios::binary); f.write(body.data(), (std::streamsize)body.size()); }
         string err;
+        logline("skin   %s", utf8(dest.wstring()).c_str());
         if (!open_skin_path(sess, dest, err))
             respond(c, "200 OK", "application/json; charset=utf-8",
                     "{\"ok\":false,\"error\":\"" + json_escape(err) + "\"}");
@@ -1435,6 +1507,12 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
     } else if (route.rfind("/api/upload-audio", 0) == 0) {
         string name = query_value(target, "name");
         if (name.empty()) name = "uploaded.bin";
+        const auto endsWith = [](const string &v, const char *suffix) {
+            const size_t n = strlen(suffix);
+            return v.size() >= n && _stricmp(v.c_str() + v.size() - n, suffix) == 0;
+        };
+        const bool isList = endsWith(name, ".m3u") || endsWith(name, ".m3u8");
+        logline(isList ? "list   %s" : "audio  %s", name.c_str());
         if (body.empty()) {
             respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"empty upload\"}");
             shutdown(c, SD_SEND);
@@ -1689,11 +1767,15 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         int want = (int)std::strtol(query_value(target, "id").c_str(), nullptr, 10);
         int pos = sess.indexOf(want);
         if (pos >= 0) {
+            logline("track  %d/%d", pos + 1, (int)sess.tracks.size());
             sess.playingId = want;
             sess.playingPath = sess.tracks[pos].path;
         }
         respond(c, "200 OK", "application/json; charset=utf-8", info_json(sess));
     } else if (route.rfind("/api/started", 0) == 0) {
+        const Track *now = nullptr;
+        for (auto &t : sess.tracks) if (t.id == sess.playingId) now = &t;
+        logline("play   %s", now ? utf8(now->path.filename().wstring()).c_str() : "");
         // the page tells us playback really began; that, not a byte request, is
         // what makes a row "the one being heard"
         int want = (int)std::strtol(query_value(target, "id").c_str(), nullptr, 10);
@@ -1701,6 +1783,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         if (pos >= 0) { sess.playingId = want; sess.playingPath = sess.tracks[pos].path; }
         respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
     } else if (route.rfind("/api/stop", 0) == 0) {
+        logline("stop");
         sess.playingPath.clear();      // the file is released; the list decides next
         sess.resolve();
         respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
@@ -1754,7 +1837,7 @@ static std::map<string, string> unpack_resource(const wchar_t *id) {
 static void load_default_skins() {
     g_default_black = unpack_resource(L"DEFAULT_BLACK");
     g_default_white = unpack_resource(L"DEFAULT_WHITE");
-    printf("default skins: %zu black, %zu white\n", g_default_black.size(), g_default_white.size());
+
 }
 
 
@@ -1863,8 +1946,10 @@ static bool handleAssociation(bool install) {
     return true;
 }
 
+
 int main() {
     SetConsoleOutputCP(CP_UTF8);
+    enableVt();
     load_default_skins();        // needed before the skin argument is resolved
     setvbuf(stdout, nullptr, _IONBF, 0);   // the title line is wanted immediately
 
@@ -1881,13 +1966,19 @@ int main() {
     std::vector<fs::path> args;
     for (int i = 1; i < argc; i++) {
         std::wstring arg = argvw[i];
+        if (arg == L"-h" || arg == L"--help" || arg == L"-?") { usage(); return 0; }
+        if (arg == L"-V" || arg == L"--version") { printf("fbsv %s\n", kVersion); return 0; }
         if (arg == L"--no-open") { openBrowser = false; continue; }
-        if (arg == L"--debug") { debugUrl = true; continue; }
+        if (arg == L"--debug") { debugUrl = true; g_verbose = true; continue; }
         if (arg == L"--single") { singleInstance = true; continue; }
         if (arg == L"--top") { pinTop = true; continue; }
         if (arg == L"--register") { handleAssociation(true); return 0; }
         if (arg == L"--unregister") { handleAssociation(false); return 0; }
-        if (!arg.empty() && arg[0] == L'-') continue;      // unknown switch
+        if (!arg.empty() && arg[0] == L'-') {
+            fprintf(stderr, "unknown option: %s\n", utf8(arg).c_str());
+            fprintf(stderr, "try fbsv --help\n");
+            return 2;
+        }
         args.push_back(fs::path(arg));
     }
     if (argvw) LocalFree(argvw);
@@ -2006,32 +2097,18 @@ int main() {
     }
     string url = "http://127.0.0.1:" + std::to_string(port) + "/" + (debugUrl ? "?debug" : "");
 
-    {
-        wchar_t wt[64];
-        if (GetEnvironmentVariableW(L"WT_SESSION", wt, 64) > 0) printf("host   Windows Terminal\n");
-        else printf("host   console host (no WT_SESSION)\n");
-        HANDLE tok = nullptr;
-        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
-            TOKEN_ELEVATION el{};
-            DWORD sz = sizeof el;
-            if (GetTokenInformation(tok, TokenElevation, &el, sz, &sz))
-                printf("level  %s\n", el.TokenIsElevated ? "elevated" : "normal");
-            CloseHandle(tok);
-        }
-    }
-    printf("build  %s %s\n", __DATE__, __TIME__);
-    printf("skin   %s\n", utf8(sess.root.wstring()).c_str());
+    printf("\n%s %s\n\n", bold("fb2km skin viewer").c_str(), kVersion);
+    printf("  %s%s\n", dim("skin    ").c_str(), utf8(sess.root.wstring()).c_str());
     if (!sess.tracks.empty()) {
         const Track &first = sess.tracks.front();
         const Media &m0 = sess.meta_of(first.id);
-        printf("track  %d/%d  %s\n", 1, (int)sess.tracks.size(),
-               utf8(first.path.filename().wstring()).c_str());
-        printf("tags   title=%s artist=%s album=%s\n", m0.title.c_str(), m0.artist.c_str(),
-               m0.album.c_str());
-        printf("cover  %s\n", m0.cover.empty() ? "none embedded" : "embedded");
+        printf("  %s%d in the list\n", dim("tracks  ").c_str(), (int)sess.tracks.size());
+        printf("  %s%s\n", dim("first   ").c_str(), utf8(first.path.filename().wstring()).c_str());
+        if (!m0.artist.empty() || !m0.title.empty())
+            printf("  %s%s - %s\n", dim("tags    ").c_str(), m0.artist.c_str(), m0.title.c_str());
     }
-    printf("open   %s\n", url.c_str());
-    printf("close this window to stop\n");
+    printf("  %s%s\n", dim("open    ").c_str(), link(url, url).c_str());
+    printf("  %sclose this window to stop\n\n", dim("stop    ").c_str());
     fflush(stdout);
     if (pinTop) std::thread(pin_on_top).detach();
     if (openBrowser) {
