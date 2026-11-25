@@ -346,16 +346,25 @@ function resolveColour(value, def) {
 // radio blocks are always skipped because we preview a local track.
 // the player's volume, 0..1; nothing in the interface changes it yet, so this is
 // the audio element's own value
+// Two numbers make the loudness: the one the volume bar shows, which is what a
+// phone's system volume would be, and a replaygain factor that only ever scales
+// playback. The bar shows the first, the speakers get the product.
 function volumeFraction() {
-  if (Number.isFinite(state.volume)) return Math.max(0, Math.min(1, state.volume));
-  const audio = document.getElementById("audio");
-  const v = audio ? audio.volume : 1;
-  return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
+  const v = Number.isFinite(state.volume) ? state.volume : 1;
+  return Math.max(0, Math.min(1, v));
+}
+
+function applyVolume() {
+  const audio = $("audio");
+  if (!audio) return;
+  const rg = Number.isFinite(state.rgFactor) ? state.rgFactor : 1;
+  audio.volume = Math.max(0, Math.min(1, volumeFraction() * rg));
 }
 
 // dragging a volume bar only repaints the bars, like a seek drag repaints the bar
 function setVolume(ratio) {
   state.volume = Math.min(1, Math.max(0, ratio));
+  applyVolume();
   for (const bar of state.volumeBars || []) {
     bar.played.style.width = (state.volume * 100) + "%";
     if (bar.knob) bar.knob.style.left = Math.round(state.volume * bar.travel) + "px";
@@ -1359,11 +1368,7 @@ function wireDrag(el, onRatio, onEnd) {
 // a volume bar only sets the volume and repaints the bars
 function wireVolume(el) {
   el.addEventListener("pointerdown", () => { state.draggingVolume = true; });
-  wireDrag(el, (r) => {
-    const audio = $("audio");
-    setVolume(r);
-    if (audio) audio.volume = r;
-  }, () => { state.draggingVolume = false; render(); });
+  wireDrag(el, (r) => { setVolume(r); }, () => { state.draggingVolume = false; render(); });
 }
 
 // a seek bar: the same gesture, but it moves the track instead of the volume
@@ -1624,16 +1629,15 @@ async function applyInfo(info, mode = "keep") {
       a.src = "/media?play=" + state.playingId + "&t=" + Date.now();
       state.srcChangedAt = Date.now();
     }
-    // replaygain is only the starting point: once the volume has been dragged,
-    // that value is the one to keep, across tracks and across syncs
-    if (Number.isFinite(state.volume)) {
-      a.volume = state.volume;
-    } else if (info.replaygain && info.replaygain.present) {
+    // replaygain scales playback, it never moves the volume bar: the bar is the
+    // phone's own volume, which replaygain has nothing to do with
+    if (info.replaygain && info.replaygain.present) {
       const db = info.replaygain.track || info.replaygain.album || 0;
-      a.volume = Math.min(1, Math.max(0, Math.pow(10, db / 20)));
+      state.rgFactor = Math.pow(10, db / 20);
     } else {
-      a.volume = 1;
+      state.rgFactor = 1;
     }
+    applyVolume();
     if (play) {
       const start = () => {
         a.play().catch(() => { state.switching = false; state.playing = false; refreshButtons(); });
