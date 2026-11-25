@@ -327,8 +327,13 @@ function parseSkindef(text) {
   return { colours, fonts, ...meta };
 }
 
+// parameter lines may carry a trailing comment: "245,245,245 //light"
+function stripComment(value) {
+  return String(value == null ? "" : value).replace(/\s*\/\/.*$/, "").trim();
+}
+
 function resolveColour(value, def) {
-  const v = (value || "").trim();
+  const v = stripComment(value);
   for (const key of [v, v + "col", v + "font"]) {
     if (def.colours[key]) return def.colours[key];
   }
@@ -393,7 +398,7 @@ function parseArm(lines, def, mode, overrides) {
     // carry what the format asks for is dropped rather than drawn in part - the
     // device leaves an empty box for a button with missing pictures.
     const box = (v) => {
-      const parts = String(v || "").split(",").map(Number);
+      const parts = stripComment(v).split(",").map(Number);
       return parts.length === 4 && parts.every((n) => Number.isFinite(n)) ? parts : null;
     };
     if (line === "[rectangle]") {
@@ -432,7 +437,7 @@ function parseArm(lines, def, mode, overrides) {
     }
     if (line === "[position]") {
       const b = box(lines[i + 1]);
-      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test(stripComment(v)) ? stripComment(v) : "");
       const knob = png(lines[i + 2]), bar = png(lines[i + 3]), barHot = png(lines[i + 4]);
       // a probe row by row: only the inactive picture is required; without it the
       // phone draws nothing, while a junk knob or active picture is simply skipped
@@ -447,7 +452,7 @@ function parseArm(lines, def, mode, overrides) {
       // set, drawn exactly like a seek bar but where the marker sits follows the
       // player's volume rather than the track's progress
       const b = box(lines[i + 1]);
-      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test(stripComment(v)) ? stripComment(v) : "");
       const knob = png(lines[i + 2]), bar = png(lines[i + 3]), set = png(lines[i + 4]);
       if (b && bar) {
         els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3],
@@ -457,7 +462,7 @@ function parseArm(lines, def, mode, overrides) {
     }
     if (line === "[button]") {
       const b = box(lines[i + 1]);
-      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test(stripComment(v)) ? stripComment(v) : "");
       // a button is seven lines: box, action and four pictures
       const src = png(lines[i + 3]), hot = png(lines[i + 4]);
       const src2 = png(lines[i + 5]), hot2 = png(lines[i + 6]);
