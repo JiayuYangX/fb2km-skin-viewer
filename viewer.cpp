@@ -66,8 +66,121 @@ namespace fs = std::filesystem;
 using std::string;
 using std::vector;
 
+
+// -------------------------------------------------------------- instances --
+// Every run keeps a line in this file so a later launch can hand its arguments
+// to the instance that is already serving instead of starting another one.
+static fs::path instance_file() {
+    static fs::path cached;
+    if (!cached.empty()) return cached;
+    wchar_t *base = nullptr;
+    std::wstring dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) {
+        dir = base;
+        CoTaskMemFree(base);
+    }
+    if (dir.empty()) dir = L".";
+    fs::path folder = fs::path(dir) / L"fb2km-skin-viewer";
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    cached = folder / L"instances.txt";
+    return cached;
+}
+
+struct Instance {
+    int pid = 0;
+    int port = 0;
+};
+
+static std::vector<Instance> read_instances() {
+    std::vector<Instance> out;
+    std::ifstream f(instance_file());
+    int pid = 0, port = 0;
+    while (f >> pid >> port) out.push_back({pid, port});
+    return out;
+}
+
+static void write_instances(const std::vector<Instance> &list) {
+    std::ofstream f(instance_file(), std::ios::trunc);
+    for (const auto &i : list) f << i.pid << ' ' << i.port << '\n';
+}
+
+static bool pid_alive(int pid) {
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+    if (!h) return false;
+    const DWORD wait = WaitForSingleObject(h, 0);
+    CloseHandle(h);
+    return wait == WAIT_TIMEOUT;
+}
+
+// a short GET/POST to our own server; empty means "not there"
+static string http_call(int port, const string &method, const string &path,
+                        const string &body = "") {
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return "";
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons((u_short)port);
+    a.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    u_long nonblocking = 1;
+    ioctlsocket(s, FIONBIO, &nonblocking);
+    connect(s, (sockaddr *)&a, sizeof a);
+    fd_set wf;
+    FD_ZERO(&wf);
+    FD_SET(s, &wf);
+    timeval tv{0, 300000};                       // 300 ms is plenty on loopback
+    if (select(0, nullptr, &wf, nullptr, &tv) <= 0) { closesocket(s); return ""; }
+    int err = 0;
+    int elen = sizeof err;
+    getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err, &elen);
+    if (err) { closesocket(s); return ""; }
+
+    nonblocking = 0;
+    ioctlsocket(s, FIONBIO, &nonblocking);
+    DWORD rcv = 400;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&rcv, sizeof rcv);
+
+    string req = method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n";
+    if (!body.empty()) req += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    req += "\r\n";
+    req += body;
+    send(s, req.data(), (int)req.size(), 0);
+
+    string out;
+    char buf[4096];
+    for (;;) {
+        const int n = recv(s, buf, sizeof buf, 0);
+        if (n <= 0) break;
+        out.append(buf, (size_t)n);
+        if (out.size() > (1u << 20)) break;
+    }
+    closesocket(s);
+    return out;
+}
+
+// true when this port answers as one of ours
+static bool is_ours(int port) {
+    const string r = http_call(port, "GET", "/api/version");
+    return r.find("\"app\":\"fbsv\"") != string::npos;
+}
+
+static string query_escape(const string &v) {
+    string out;
+    for (unsigned char c : v) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == ':') out += (char)c;
+        else {
+            char hex[8];
+            sprintf(hex, "%%%02X", c);
+            out += hex;
+        }
+    }
+    return out;
+}
+
 // -------------------------------------------------------------------- cli --
 static const char *kVersion = "0.2.0";
+static const int kBasePort = 17800;
 
 static bool g_vt = false;          // console understands ANSI escapes
 static bool g_verbose = false;     // --debug: also print every request
@@ -1457,6 +1570,39 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         respond(c, "200 OK", "image/png", read_resource(L"APP_ICON_PNG"), "", true);
     } else if (route.rfind("/brand.png", 0) == 0) {
         respond(c, "200 OK", "image/png", read_resource(L"BRAND_PNG"), "", true);
+    } else if (route.rfind("/api/forward", 0) == 0) {
+        // a second launch reaches this: it carries the paths that were handed to
+        // it, and nothing else
+        const string skin = query_value(target, "skin");
+        const string audio = query_value(target, "audio");
+        string err;
+        bool ok = true;
+        if (!skin.empty()) {
+            logline("skin   %s", skin.c_str());
+            if (!open_skin_path(sess, fs::path(wide(skin)), err)) ok = false;
+        }
+        size_t at = 0;
+        while (!audio.empty() && at <= audio.size()) {
+            const size_t nl = audio.find('\n', at);
+            const string one = audio.substr(at, nl == string::npos ? string::npos : nl - at);
+            if (!one.empty()) {
+                const fs::path path = fs::path(wide(one));
+                if (is_playlist(path)) {
+                    for (auto &t : read_playlist(path)) sess.add(t);
+                    logline("list   %s", one.c_str());
+                } else if (is_audio(path)) {
+                    sess.add(fs::absolute(path));
+                    logline("audio  %s", one.c_str());
+                } else {
+                    logline("skip   %s", one.c_str());
+                }
+            }
+            if (nl == string::npos) break;
+            at = nl + 1;
+        }
+        respond(c, "200 OK", "application/json; charset=utf-8",
+                ok ? "{\"ok\":true}"
+                   : "{\"ok\":false,\"error\":\"" + json_escape(err) + "\"}");
     } else if (route.rfind("/api/open-skin", 0) == 0) {
         string path = query_value(target, "path");
         string err;
@@ -1743,7 +1889,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
     } else if (route.rfind("/api/version", 0) == 0) {
         string root = utf8(sess.root.filename().wstring());
         respond(c, "200 OK", "application/json; charset=utf-8",
-                "{\"v\":\"" + json_escape(skin_fingerprint(sess)) +
+                "{\"app\":\"fbsv\",\"v\":\"" + json_escape(skin_fingerprint(sess)) +
                 "\",\"root\":\"" + json_escape(root) + "\"}");
     } else if (route.rfind("/api/info", 0) == 0) {
         sess.resolve();
@@ -1950,6 +2096,13 @@ static bool handleAssociation(bool install) {
 int main() {
     SetConsoleOutputCP(CP_UTF8);
     enableVt();
+
+    // needed before anything probes for a running instance
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        printf("winsock failed\n");
+        return 1;
+    }
     load_default_skins();        // needed before the skin argument is resolved
     setvbuf(stdout, nullptr, _IONBF, 0);   // the title line is wanted immediately
 
@@ -1963,6 +2116,9 @@ int main() {
     bool debugUrl = false;
     bool singleInstance = false;
     bool pinTop = false;
+    bool forceNew = false;
+    bool portGiven = false;
+    int explicitPort = 0;
     std::vector<fs::path> args;
     for (int i = 1; i < argc; i++) {
         std::wstring arg = argvw[i];
@@ -1972,6 +2128,8 @@ int main() {
         if (arg == L"--debug") { debugUrl = true; g_verbose = true; continue; }
         if (arg == L"--single") { singleInstance = true; continue; }
         if (arg == L"--top") { pinTop = true; continue; }
+        if (arg == L"--new") { forceNew = true; continue; }
+        if (arg == L"--port" && i + 1 < argc) { explicitPort = _wtoi(argvw[++i]); portGiven = true; continue; }
         if (arg == L"--register") { handleAssociation(true); return 0; }
         if (arg == L"--unregister") { handleAssociation(false); return 0; }
         if (!arg.empty() && arg[0] == L'-') {
@@ -2013,6 +2171,33 @@ int main() {
         }
         (void)looksLikeSkin;
     }
+
+    // A later launch hands its arguments to the instance that is already serving,
+    // so dragging a package onto the exe replaces the skin in the open window
+    // instead of filling the machine with servers. --new keeps the old behaviour.
+    if (!forceNew) {
+        std::vector<Instance> alive;
+        const auto known = read_instances();
+        for (const auto &in : known) if (pid_alive(in.pid) && is_ours(in.port)) alive.push_back(in);
+        if (alive.size() != known.size()) write_instances(alive);
+        if (!alive.empty()) {
+            Instance target = alive.front();
+            for (const auto &in : alive) if (in.port == kBasePort) { target = in; break; }
+            string query;
+            if (!skinArg.empty()) query += "&skin=" + query_escape(utf8(skinArg.wstring()));
+            string joined;
+            for (const auto &p : inputs) joined += utf8(p.wstring()) + "\n";
+            if (!joined.empty()) query += "&audio=" + query_escape(joined);
+            const string answer = http_call(target.port, "POST", "/api/forward?" + query);
+            if (answer.find("\"ok\":true") != string::npos) {
+                const string url = "http://127.0.0.1:" + std::to_string(target.port) + "/";
+                printf("handed to the instance already on port %d\n", target.port);
+                if (openBrowser) launch_browser(wide(url));
+                return 0;
+            }
+        }
+    }
+
 
     fs::path root;
     std::map<string, string> pkgFiles;
@@ -2072,23 +2257,53 @@ int main() {
     // right away, and played if the browser allows it
     if (!sess.tracks.empty()) sess.playingId = sess.tracks.front().id;
 
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        printf("winsock failed\n");
-        return 1;
+    // the port is stable so a bookmark keeps working; busy ports are skipped and
+    // the next free one is taken, an ephemeral port only when the range is full
+    auto tryBind = [](int want, int &got) -> SOCKET {
+        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) return INVALID_SOCKET;
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = inet_addr("127.0.0.1");
+        a.sin_port = htons((u_short)want);
+        if (bind(s, (sockaddr *)&a, sizeof a) != 0 || listen(s, 16) != 0) {
+            closesocket(s);
+            return INVALID_SOCKET;
+        }
+        int len = sizeof a;
+        getsockname(s, (sockaddr *)&a, &len);
+        got = ntohs(a.sin_port);
+        return s;
+    };
+
+    int port = 0;
+    SOCKET srv = INVALID_SOCKET;
+    if (portGiven) {
+        srv = tryBind(explicitPort, port);
+        if (srv == INVALID_SOCKET) {
+            printf("port %d is not free\n", explicitPort);
+            return 1;
+        }
+    } else {
+        for (int p = kBasePort; p < kBasePort + 100 && srv == INVALID_SOCKET; p++) srv = tryBind(p, port);
+        if (srv == INVALID_SOCKET) srv = tryBind(0, port);
+        if (srv == INVALID_SOCKET) {
+            printf("cannot listen\n");
+            return 1;
+        }
     }
-    SOCKET srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port = 0;
-    if (bind(srv, (sockaddr *)&addr, sizeof addr) != 0 || listen(srv, 16) != 0) {
-        printf("cannot listen\n");
-        return 1;
+    {
+        // the registry is what a later launch looks at; guard the read-modify-write
+        HANDLE lock = CreateMutexW(nullptr, FALSE, L"Local\\fb2km-skin-viewer-instances");
+        if (lock) WaitForSingleObject(lock, 2000);
+        auto list = read_instances();
+        list.erase(std::remove_if(list.begin(), list.end(),
+                                  [](const Instance &i) { return i.pid == GetCurrentProcessId(); }),
+                   list.end());
+        list.push_back({(int)GetCurrentProcessId(), port});
+        write_instances(list);
+        if (lock) { ReleaseMutex(lock); CloseHandle(lock); }
     }
-    int len = sizeof addr;
-    getsockname(srv, (sockaddr *)&addr, &len);
-    int port = ntohs(addr.sin_port);
     {
         // several instances may run side by side; the port tells them apart
         wchar_t title[96];
