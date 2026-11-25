@@ -2161,9 +2161,12 @@ function shownStatusHeight() {
 }
 
 function syncUrl() {
+  // one state, one address: the keys always come in this order and a value that
+  // matches the default is left out, so the same view always serialises the same
   const q = new URLSearchParams();
-  // dev carries the whole follow switch, so there is no separate flag to keep in
-  // step with it
+  if (state.skin) q.set("skin", state.skin);
+  if (state.layout) q.set("layout", state.layout);
+  // dev carries the whole follow switch, so there is no separate flag for it
   q.set("dev", state.deviceFollow
     ? "auto"
     : (state.deviceW && state.deviceH ? state.deviceW + "x" + state.deviceH
@@ -2172,10 +2175,8 @@ function syncUrl() {
   // out from the size and would only be noise
   if (!state.deviceFollow) q.set("st", String(shownStatusHeight()));
   if (state.simStatus) q.set("bar", "1");
-  if (state.theme && state.theme !== "auto") q.set("theme", state.theme);
   if (state.lang) q.set("lang", state.lang);
-  if (state.skin) q.set("skin", state.skin);
-  if (state.layout) q.set("layout", state.layout);
+  if (state.theme && state.theme !== "auto") q.set("theme", state.theme);
   const next = location.pathname + "?" + q.toString();
   if (next !== location.pathname + location.search) {
     history.replaceState(null, "", next);

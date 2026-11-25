@@ -2133,7 +2133,7 @@ int main() {
     std::vector<fs::path> args;
     fs::path skinFlag;                       // --skin beats the sniffing
     std::vector<fs::path> audioFlag, listFlag;
-    string uiQuery;                          // the view half of the address
+    string uiDev, uiSt, uiBar, uiLang, uiTheme, uiLayout;   // the view half
     bool literal = false;                    // after --, nothing is a switch
     int i = 1;                               // the loop index, shared with the lambdas
 
@@ -2149,9 +2149,23 @@ int main() {
         fprintf(stderr, "try fbsv --help\n");
         return 2;
     };
-    auto addUi = [&](const string &pair) {
-        if (!uiQuery.empty()) uiQuery += "&";
-        uiQuery += pair;
+    // the address is written in one fixed order, whatever order the flags came in
+    auto buildView = [&]() {
+        string out;
+        auto add = [&](const char *key, const string &v) {
+            if (v.empty()) return;
+            if (!out.empty()) out += "&";
+            out += key;
+            out += "=";
+            out += v;
+        };
+        add("layout", uiLayout);
+        add("dev", uiDev);
+        add("st", uiSt);
+        add("bar", uiBar);
+        add("lang", uiLang);
+        add("theme", uiTheme);
+        return out;
     };
 
     for (; i < argc; i++) {
@@ -2178,7 +2192,7 @@ int main() {
             const bool autoDev = v == L"auto";
             const bool size = std::regex_match(v, std::wregex(L"[0-9]+x[0-9]+"));
             if (!autoDev && !size) return wrongValue("--dev wants auto or WxH", v);
-            addUi("dev=" + utf8(v));
+            uiDev = utf8(v);
             continue;
         }
         if (arg == L"--st" || arg == L"--status-h") {
@@ -2186,28 +2200,28 @@ int main() {
             const bool autoSt = v == L"auto";
             const bool number = std::regex_match(v, std::wregex(L"[0-9]+"));
             if (!autoSt && !number) return wrongValue("--st wants auto or a number", v);
-            addUi("st=" + utf8(v));
+            uiSt = utf8(v);
             continue;
         }
         if (arg == L"--bar") {
             const std::wstring v = value(L"--bar");
             if (v != L"0" && v != L"1") return wrongValue("--bar wants 0 or 1", v);
-            addUi("bar=" + utf8(v));
+            uiBar = utf8(v);
             continue;
         }
         if (arg == L"--theme") {
             const std::wstring v = value(L"--theme");
             if (v != L"auto" && v != L"dark" && v != L"light") return wrongValue("--theme wants auto, dark or light", v);
-            addUi("theme=" + utf8(v));
+            uiTheme = utf8(v);
             continue;
         }
         if (arg == L"--lang") {
             const std::wstring v = value(L"--lang");
             if (v != L"zh" && v != L"en") return wrongValue("--lang wants zh or en", v);
-            addUi("lang=" + utf8(v));
+            uiLang = utf8(v);
             continue;
         }
-        if (arg == L"--layout") { addUi("layout=" + query_escape(utf8(value(L"--layout")))); continue; }
+        if (arg == L"--layout") { uiLayout = query_escape(utf8(value(L"--layout"))); continue; }
 
         if (!arg.empty() && arg[0] == L'-') {
             fprintf(stderr, "unknown option: %s\n", utf8(arg).c_str());
@@ -2216,6 +2230,7 @@ int main() {
         }
         args.push_back(fs::path(arg));
     }
+    const string uiQuery = buildView();
     if (argvw) LocalFree(argvw);
 
     // instances are independent (each binds its own port); --single restores the
