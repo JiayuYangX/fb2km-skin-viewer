@@ -43,8 +43,7 @@ export PATH
 # the version comes from the newest tag, with the number of commits since it, so
 # the executable and its resource block never disagree
 VER="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-[[ -z "$VER" && -f VERSION ]] && VER="$(tr -d '\r\n' < VERSION)"
-[[ -z "$VER" ]] && VER="0.0.0"
+[[ -z "$VER" ]] && VER="0.0.0"          # no tags at all: a source tree without .git
 AHEAD="$(git rev-list --count "$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)"..HEAD 2>/dev/null || echo 0)"
 FULL="$VER"
 [[ "$AHEAD" != "0" ]] && FULL="$VER+$AHEAD"
