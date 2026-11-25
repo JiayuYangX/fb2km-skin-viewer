@@ -2178,9 +2178,9 @@ function syncUrl() {
   // the height only shows while the size is manual: under dev=auto it is worked
   // out from the size and would only be noise
   if (!state.deviceFollow) q.set("st", String(shownStatusHeight()));
-  if (state.simStatus) q.set("bar", "1");
+  q.set("bar", state.simStatus ? "1" : "0");
   if (state.lang) q.set("lang", state.lang);
-  if (state.theme && state.theme !== "auto") q.set("theme", state.theme);
+  q.set("theme", state.theme || "auto");
   const next = location.pathname + "?" + q.toString();
   if (next !== location.pathname + location.search) {
     history.replaceState(null, "", next);
