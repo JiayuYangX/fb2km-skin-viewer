@@ -890,7 +890,9 @@ function render() {
           track.style.height = (e.h * ky) + "px";
           el.appendChild(track);
 
-          if (showTrack) {
+          // a volume bar has something to show with or without a track; a seek bar
+          // only once the player holds one
+          if (showTrack || e.volume) {
             const played = document.createElement("div");
             played.style.position = "absolute";
             played.style.left = "0";
