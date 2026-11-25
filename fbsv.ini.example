@@ -1,0 +1,26 @@
+# fbsv settings. Keep this file next to fbsv.exe as plain fbsv.ini.
+# Lines are "key = value"; # and ; start a comment. The program never writes here.
+
+# ---- interface ----
+#lang  = zh                     ; zh | en, default follows the system
+#theme = auto                   ; auto | dark | light
+
+# ---- preview ----
+#dev    = auto                  ; auto | 1080x1920
+#status = auto                  ; auto | 74
+#bar    = 1                     ; 1 | 0
+
+# ---- startup ----
+#port   = 17800
+#single = off                   ; off = hand the file to a running instance
+#open   = on                    ; open a browser on start
+#debug  = off
+#top    = off
+
+# ---- preferred subskins, most wanted first ----
+# A subskin is shaped for a screen, so entries are shapes, not names.
+# The first entry that has a subskin close enough wins; with nothing matching,
+# the skin's first subskin is used. ratio from the skin: WxH declaration.
+#layout = 9:16
+#layout = 4:3
+#layout-tolerance = 15          ; percent; how close counts as the same shape

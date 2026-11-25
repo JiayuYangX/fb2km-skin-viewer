@@ -1,3 +1,29 @@
+// "9:16" -> 0.5625; anything without a colon is not a ratio and is skipped
+function ratioOf(entry) {
+  const m = String(entry).trim().match(/^([0-9.]+)\s*[:x/]\s*([0-9.]+)$/i);
+  return m && +m[2] ? +m[1] / +m[2] : null;
+}
+
+// the skin's subskins are shaped for screens, so the list is matched by shape:
+// the first entry that has a subskin within the tolerance wins
+function preferredLayout(skin) {
+  const names = Object.keys(skin.layouts);
+  const tol = (hints.tolerance == null ? 15 : hints.tolerance) / 100;
+  for (const entry of hints.layouts || []) {
+    const target = ratioOf(entry);
+    if (!target) continue;
+    let best = null, bestErr = Infinity;
+    for (const n of names) {
+      const L = skin.layouts[n];
+      if (!L || !L.w || !L.h) continue;
+      const err = Math.abs(L.w / L.h - target) / target;
+      if (err < bestErr) { bestErr = err; best = n; }
+    }
+    if (best && bestErr <= tol) return best;
+  }
+  return null;
+}
+
 function fillLayouts() {
   const skin = skins.get(state.skin);
   const sel = $("layout");
@@ -39,6 +65,9 @@ const state = {
 };
 
 const skins = new Map();          // name -> { def, layouts, base }
+// fbsv.ini: which subskin ratios to prefer, most wanted first, and how far
+// off a candidate may be before it counts as a different shape
+let hints = { layouts: [], tolerance: 15 };
 
 // ---------------------------------------------------------------- helpers --
 function dec16(buf) {
@@ -2621,7 +2650,8 @@ function fillLayouts() {
   // ?layout= picks one by name, which makes a render reproducible for a bug report
   const asked = new URLSearchParams(location.search).get("layout");
   state.layout = (asked && names.includes(asked)) ? asked
-    : (remembered && names.includes(remembered)) ? remembered : names[0];
+    : (remembered && names.includes(remembered)) ? remembered
+    : (preferredLayout(skin) || names[0]);
   sel.value = state.layout;
   syncUrl();
 }
@@ -2649,6 +2679,9 @@ window.addEventListener("load", async () => {
     state.fingerprint = ver.v || "";
     state.skinRoot = ver.root || "";
   } catch (e) { /* older viewer, no version route */ }
+  try {
+    hints = await (await fetch("/api/settings", { cache: "no-store" })).json();
+  } catch (e) { /* older viewer, no settings route */ }
   await reloadSkins(false);
   state.skinsReady = true;
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(refit);

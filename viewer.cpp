@@ -245,6 +245,8 @@ static void usage() {
     printf("  %-22s %s\n", "--single", "refuse to start if another instance runs");
     printf("  %-22s %s\n", "--top", "keep the window on top");
     printf("  %-22s %s\n", "--debug", "open with ?debug in the address");
+    printf("  %-22s %s\n", "fbsv.ini", "settings beside the exe: dev, status, bar, theme, lang,");
+    printf("  %-22s %s\n", "", "port, single, open, debug, top, layout, layout-tolerance");
     printf("  %-22s %s\n", "--register", "add .fbskin to the Open with list");
     printf("  %-22s %s\n", "--unregister", "remove it again");
     printf("\n%s\n", bold("view").c_str());
@@ -256,7 +258,7 @@ static void usage() {
     printf("  %-22s %s\n", "--bar 0|1", "draw the status bar");
     printf("  %-22s %s\n", "--theme auto|dark|light", "colour scheme");
     printf("  %-22s %s\n", "--lang zh|en", "interface language");
-    printf("  %-22s %s\n", "--layout <file>", "which layout of the skin");
+    printf("  %-22s %s\n", "--layout <name>", "pick this subskin by name, over fbsv.ini");
     printf("\n%s\n", dim("examples").c_str());
     printf("  fbsv skin.fbskin                open a package\n");
     printf("  fbsv %s\n", "fb2km-skin.Eclipse\\dark");
@@ -465,6 +467,108 @@ static string trim(string s) {
     while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
     return s.substr(i);
 }
+
+// ---------------------------------------------------------------- settings --
+
+// fbsv.ini sits next to fbsv.exe: plain "key = value" lines, # and ; comment.
+struct Settings {
+    string dev, st, bar, lang, theme;      // empty means "not in the file"
+    int port = 0;
+    bool single = false, open = true, debug = false, top = false;
+    std::vector<string> layouts;           // preferred subskin ratios, in order
+    double tolerance = 15.0;               // percent
+};
+static Settings g_cfg;
+
+static fs::path exe_dir() {
+    wchar_t buf[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return fs::path(buf).parent_path();
+}
+
+static bool config_bool(const string &v, bool &out) {
+    const string t = lower(v);
+    if (t == "on" || t == "1" || t == "yes" || t == "true") { out = true; return true; }
+    if (t == "off" || t == "0" || t == "no" || t == "false") { out = false; return true; }
+    return false;
+}
+
+static void load_config() {
+    const fs::path file = exe_dir() / L"fbsv.ini";
+    std::error_code ec;
+    if (!fs::exists(file, ec)) return;
+    string text = read_file(file);
+    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF &&
+        (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF)
+        text.erase(0, 3);                  // a BOM from an editor is not part of the key
+    std::istringstream in(text);
+    string raw;
+    int line = 0;
+    while (std::getline(in, raw)) {
+        ++line;
+        const string row = trim(raw);
+        if (row.empty() || row[0] == '#' || row[0] == ';') continue;
+        const size_t eq = row.find('=');
+        if (eq == string::npos) {
+            fprintf(stderr, "fbsv.ini:%d: expected key = value\n", line);
+            continue;
+        }
+        const string key = lower(trim(row.substr(0, eq)));
+        const string val = trim(row.substr(eq + 1));
+        auto bad = [&](const char *want) {
+            fprintf(stderr, "fbsv.ini:%d: %s wants %s, not \"%s\"\n",
+                    line, key.c_str(), want, val.c_str());
+        };
+        if (key == "layout") {
+            if (!val.empty()) g_cfg.layouts.push_back(val);
+        } else if (key == "layout-tolerance") {
+            char *end = nullptr;
+            const double d = std::strtod(val.c_str(), &end);
+            if (end && !*end && d >= 0) g_cfg.tolerance = d;
+            else bad("a percentage");
+        } else if (key == "dev") {
+            if (val == "auto" || std::regex_match(val, std::regex("[0-9]+x[0-9]+"))) g_cfg.dev = val;
+            else bad("auto or WxH");
+        } else if (key == "status" || key == "st") {
+            if (val == "auto" || std::regex_match(val, std::regex("[0-9]+"))) g_cfg.st = val;
+            else bad("auto or a number");
+        } else if (key == "bar") {
+            if (val == "0" || val == "1") g_cfg.bar = val;
+            else bad("0 or 1");
+        } else if (key == "theme") {
+            if (val == "auto" || val == "dark" || val == "light") g_cfg.theme = val;
+            else bad("auto, dark or light");
+        } else if (key == "lang") {
+            if (val == "zh" || val == "en") g_cfg.lang = val;
+            else bad("zh or en");
+        } else if (key == "port") {
+            const int p = atoi(val.c_str());
+            if (p > 0 && p < 65536) g_cfg.port = p;
+            else bad("a port number");
+        } else if (key == "single" || key == "open" || key == "debug" || key == "top") {
+            bool b = false;
+            if (!config_bool(val, b)) { bad("on or off"); continue; }
+            if (key == "single") g_cfg.single = b;
+            else if (key == "open") g_cfg.open = b;
+            else if (key == "debug") g_cfg.debug = b;
+            else g_cfg.top = b;
+        } else {
+            fprintf(stderr, "fbsv.ini:%d: unknown key \"%s\"\n", line, key.c_str());
+        }
+    }
+}
+
+static string settings_json() {
+    std::ostringstream o;
+    o << "{\"layouts\":[";
+    for (size_t k = 0; k < g_cfg.layouts.size(); k++) {
+        if (k) o << ",";
+        o << "\"" << json_escape(g_cfg.layouts[k]) << "\"";
+    }
+    o << "],\"tolerance\":" << g_cfg.tolerance << "}";
+    return o.str();
+}
+
 
 static bool is_audio(const fs::path &p) {
     static const char *exts[] = {".flac", ".mp3", ".m4a", ".mp4", ".aac", ".ogg",
@@ -1998,6 +2102,8 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         }
         o << "]";
         respond(c, "200 OK", "application/json; charset=utf-8", o.str());
+    } else if (route.rfind("/api/settings", 0) == 0) {
+        respond(c, "200 OK", "application/json; charset=utf-8", settings_json());
     } else if (route.rfind("/api/version", 0) == 0) {
         string root = utf8(sess.root.filename().wstring());
         respond(c, "200 OK", "application/json; charset=utf-8",
@@ -2172,6 +2278,7 @@ int main() {
         printf("winsock failed\n");
         return 1;
     }
+    load_config();               // fbsv.ini next to the exe, if there is one
     load_default_skins();        // needed before the skin argument is resolved
     setvbuf(stdout, nullptr, _IONBF, 0);   // the title line is wanted immediately
 
@@ -2181,17 +2288,19 @@ int main() {
 
 
     fs::path skinArg;
-    bool openBrowser = true;
-    bool debugUrl = false;
-    bool singleInstance = false;
-    bool pinTop = false;
+    bool openBrowser = g_cfg.open;
+    bool debugUrl = g_cfg.debug;
+    bool singleInstance = g_cfg.single;
+    bool pinTop = g_cfg.top;
     bool forceNew = false;
-    bool portGiven = false;
-    int explicitPort = 0;
+    bool portGiven = g_cfg.port != 0;
+    int explicitPort = g_cfg.port;
+    if (g_cfg.debug) g_verbose = true;
     std::vector<fs::path> args;
     fs::path skinFlag;                       // --skin beats the sniffing
     std::vector<fs::path> audioFlag, listFlag;
-    string uiDev, uiSt, uiBar, uiLang, uiTheme, uiLayout;   // the view half
+    string uiDev = g_cfg.dev, uiSt = g_cfg.st, uiBar = g_cfg.bar;   // the view half
+    string uiLang = g_cfg.lang, uiTheme = g_cfg.theme, uiLayout;    // config first
     bool literal = false;                    // after --, nothing is a switch
     int i = 1;                               // the loop index, shared with the lambdas
 
