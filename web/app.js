@@ -306,6 +306,10 @@ function labelStyle(content, def) {
   return { c, b, i };
 }
 
+// both names are used in the wild: skindef.txt in format 2, skindef.skindef in
+// skins built by the old designer
+const DEF_NAMES = ["skindef.txt", "skindef.skindef"];
+
 function parseSkindef(text) {
   const colours = {}, fonts = {}, meta = {};
   for (const line of text.split(/\r?\n/)) {
@@ -2383,17 +2387,21 @@ async function loadSkin() {
     // list instead of replacing it
     // the separator between a folder and its subskin must survive encoding
     const base = "/skin/" + encodeURIComponent(label).replace(/%2F/gi, "/") + "/";
-    try {
-      const r = await fetch(base + "skindef.txt", { cache: "no-store" });
-      if (r.ok) found.push({ base, name: label });
-    } catch (e) { /* not there */ }
+    // the entrypoint is skindef.txt, or skindef.skindef in skins built by the old
+    // designer; the first name that answers is the one this skin uses
+    for (const defName of DEF_NAMES) {
+      try {
+        const r = await fetch(base + defName, { cache: "no-store" });
+        if (r.ok) { found.push({ base, name: label, def: defName }); break; }
+      } catch (e) { /* not there */ }
+    }
   }
   if (!found.length) { status.textContent = tr("msg.noSkin"); return; }
 
-  for (const { base, name } of found) {
+  for (const { base, name, def } of found) {
     let text;
     try {
-      text = dec16(await (await fetch(base + "skindef.txt", { cache: "no-store" })).arrayBuffer());
+      text = dec16(await (await fetch(base + def, { cache: "no-store" })).arrayBuffer());
     } catch (e) { continue; }
     const entry = { def: parseSkindef(text), layouts: {},
                     base: base.startsWith("/") ? base : "./" + base };

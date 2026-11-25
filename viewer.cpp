@@ -962,11 +962,30 @@ static string query_value(const string &target, const char *key) {
 // a folder, a skindef.txt, or a .fbskin package: anything the command line accepts
 // add (never replace): opening a second skin keeps the first one available
 
+
+// the entrypoint is skindef.txt, or skindef.skindef in skins built by the old
+// designer; both are searched in the same places
+static const char *kDefNames[] = {"skindef.txt", "skindef.skindef"};
+
+static fs::path find_def(const fs::path &dir) {
+    std::error_code ec;
+    for (const char *name : kDefNames) {
+        fs::path p = dir / name;
+        if (fs::exists(p, ec)) return p;
+    }
+    return {};
+}
+
+static bool has_def(const std::map<string, string> &pkg) {
+    for (const char *name : kDefNames) if (pkg.count(name)) return true;
+    return false;
+}
+
 // a folder is a skin when its skindef points at layouts that really exist
 static bool skin_is_usable(const fs::path &dir) {
     std::error_code ec;
-    fs::path def = dir / "skindef.txt";
-    if (!fs::exists(def, ec)) return false;
+    fs::path def = find_def(dir);
+    if (def.empty()) return false;
     string raw = read_file(def);
     std::wstring text;
     for (size_t i = 0; i + 1 < raw.size(); i += 2)
@@ -988,7 +1007,7 @@ static bool skin_is_usable(const fs::path &dir) {
 
 // skins exported from the desktop tool wrap everything in one folder
 static void strip_common_folder(std::map<string, string> &pkg) {
-    if (pkg.count("skindef.txt")) return;
+    if (has_def(pkg)) return;
     string prefix;
     for (auto &kv : pkg) {
         auto slash = kv.first.find('/');
@@ -1005,10 +1024,25 @@ static void strip_common_folder(std::map<string, string> &pkg) {
 
 static void remember_skin(Session &sess, const string &label, const fs::path &root,
                           std::map<string, string> files) {
+    // the same folder opened twice is the same skin; two different skins that
+    // carry the same name (two generations of one skin, say) both stay on offer
     for (size_t i = 0; i < sess.sources.size(); i++) {
-        if (sess.sources[i].label == label) { sess.active = i; return; }
+        if (sess.sources[i].label != label) continue;
+        if (sess.sources[i].root == root) { sess.active = i; return; }
+        break;
     }
-    sess.sources.push_back({label, root, std::move(files)});
+    auto taken = [&](const string &name) {
+        for (const auto &src : sess.sources) if (src.label == name) return true;
+        return false;
+    };
+    string unique = label;
+    if (taken(unique)) {
+        const string parent = utf8(root.parent_path().filename().wstring());
+        unique = label + " (" + parent + ")";
+        for (int n = 2; taken(unique); n++)
+            unique = label + " (" + parent + " " + std::to_string(n) + ")";
+    }
+    sess.sources.push_back({unique, root, std::move(files)});
     sess.active = sess.sources.size() - 1;
 }
 
@@ -1034,7 +1068,7 @@ static bool open_skin_path(Session &sess, const fs::path &p, string &err) {
         strip_common_folder(pkg);
     }
     root = fs::absolute(root, ec);
-    string label = name == "skindef.txt" ? utf8(root.filename().wstring()) : utf8(root.filename().wstring());
+    string label = utf8(root.filename().wstring());
     remember_skin(sess, label, root, std::move(pkg));
     sess.root = root;
     sess.files = sess.sources[sess.active].files;
@@ -1706,7 +1740,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         std::error_code ec;
         auto claim = [&](const fs::path &dir, bool package, const string &label, const string &sub) -> bool {
             string key = package ? "pkg:" + label
-                                 : utf8(fs::weakly_canonical(dir / "skindef.txt", ec).wstring());
+                                 : utf8(fs::weakly_canonical(find_def(dir), ec).wstring());
             if (!seen.insert(key).second) return false;      // already offered
             addLabel(sub.empty() ? label : label + "/" + sub);
             return true;
@@ -1871,7 +1905,7 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         std::error_code ec;
         for (auto it = fs::directory_iterator(sess.root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
             if (!it->is_directory()) continue;
-            fs::path def = it->path() / "skindef.txt";
+            fs::path def = find_def(it->path());
             if (!fs::exists(def, ec)) continue;
             // a real skin points at layouts that exist next to its skindef; a
             // template folder references files that are not there
@@ -2255,11 +2289,13 @@ int main() {
         bool looksLikeSkin = fs::is_directory(first) || is_playlist_ext(first) == false &&
                              (ext_of(first.filename().string()) == ".fbskin" ||
                               ext_of(first.filename().string()) == ".zip" ||
-                              lower(first.filename().string()) == "skindef.txt") ||
+                              (lower(first.filename().string()) == "skindef.txt" ||
+             lower(first.filename().string()) == "skindef.skindef")) ||
                              fs::is_directory(first);
         if (fs::is_directory(first) || ext_of(first.filename().string()) == ".fbskin" ||
             ext_of(first.filename().string()) == ".zip" ||
-            lower(first.filename().string()) == "skindef.txt") {
+            lower(first.filename().string()) == "skindef.txt" ||
+            lower(first.filename().string()) == "skindef.skindef") {
             skinArg = first;
             inputs.assign(args.begin() + 1, args.end());
         } else {
