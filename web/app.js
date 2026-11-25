@@ -453,11 +453,11 @@ function parseArm(lines, def, mode, overrides) {
         els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3], next: which === "next" });
       } else if (b && (which === "mainback" || which === "mainmirrored")) {
         // The old designer's two extra types. The 2.x app drops both, so these are
-        // only here for skins written against 1.x: mainback is drawn plainly (the
-        // 1.6.9 app does not zoom or dim it either, whatever the old notes say)
-        // and mainmirrored is flipped upside down.
-        els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3],
-                   next: false, mirror: which === "mainmirrored" });
+        // only here for skins written against 1.x: mainback covers its box, and
+        // mainmirrored is the picture squashed into a strip and flipped over.
+        els.push({ t: "art", x: b[0], y: b[1], w: b[2], h: b[3], next: false,
+                   mirror: which === "mainmirrored",
+                   backdrop: which === "mainback" });
       }
       i += 3; continue;
     }
@@ -893,10 +893,14 @@ function render() {
           // before comparing (a 457.92 box behaves like 457, while 458 fills).
           return Math.floor(boxH) / scaledH >= 0.95 ? "100% 100%" : "contain";
         };
-        // a reflection is the whole picture squashed into the strip below the main
-        // art: keeping its shape would leave a small square and no reflection at
-        // all, so the mirrored type always fills its box
-        el.style.backgroundSize = e.mirror ? "100% 100%" : fitArt(shown);
+        // The two old types are measured against the 1.6.9 app: mainback zooms in
+        // until the box is covered (no desaturation and no dimming, whatever the
+        // old notes claim), and mainmirrored squashes the whole picture into its
+        // strip so the result reads as a reflection. Plain main keeps its shape,
+        // like every other picture in a layout.
+        if (e.mirror) el.style.backgroundSize = "100% 100%";
+        else if (e.backdrop) el.style.backgroundSize = "cover";
+        else el.style.backgroundSize = fitArt(shown);
       }
       if (e.next) state.artNextEl = el; else state.artEl = el;
 
