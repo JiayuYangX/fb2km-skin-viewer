@@ -339,6 +339,14 @@ function resolveColour(value, def) {
 // ------------------------------------------------------------------ parser --
 // mode "playing" takes the first arm of a conditional, "other" the else arm;
 // radio blocks are always skipped because we preview a local track.
+// the player's volume, 0..1; nothing in the interface changes it yet, so this is
+// the audio element's own value
+function volumeFraction() {
+  const audio = document.getElementById("audio");
+  const v = audio ? audio.volume : 1;
+  return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
+}
+
 function parseArm(lines, def, mode, overrides) {
   const els = [];
   const branch = [];
@@ -431,6 +439,19 @@ function parseArm(lines, def, mode, overrides) {
       if (b && bar) {
         els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3],
                    knob, bar, barHot: barHot || bar });
+      }
+      i += 5; continue;
+    }
+    if (line === "[volume]") {
+      // the old designer's volume bar: a marker, a back image and the part already
+      // set, drawn exactly like a seek bar but where the marker sits follows the
+      // player's volume rather than the track's progress
+      const b = box(lines[i + 1]);
+      const png = (v) => (/\.(png|jpe?g|webp)$/i.test((v || "").trim()) ? v.trim() : "");
+      const knob = png(lines[i + 2]), bar = png(lines[i + 3]), set = png(lines[i + 4]);
+      if (b && bar) {
+        els.push({ t: "pos", x: b[0], y: b[1], w: b[2], h: b[3],
+                   knob, bar, barHot: set || bar, volume: true });
       }
       i += 5; continue;
     }
@@ -875,7 +896,10 @@ function render() {
             played.style.left = "0";
             played.style.top = "0";
             played.style.height = (e.h * ky) + "px";
-            played.style.width = (state.pos * 100) + "%";
+            // a volume bar reads the player's own volume, a seek bar the track's
+            // progress
+            const frac = e.volume ? volumeFraction() : state.pos;
+            played.style.width = (frac * 100) + "%";
             // the played piece is the same picture clipped to the elapsed width,
             // not the whole picture squeezed into it (that looked faint)
             played.style.backgroundImage = 'url("' + posImage(e.barHot || e.bar) + '")';
@@ -897,7 +921,7 @@ function render() {
               if (!size) return;
               const w = size.w * kx;
               knob.style.width = w + "px";
-              if (state.posUI && state.posUI.knob === knob) {
+              if (!e.volume && state.posUI && state.posUI.knob === knob) {
                 state.posUI.d = w;
                 state.posUI.travel = Math.max(0, (e.w * kx) - w);
                 knob.style.left = Math.round(state.pos * state.posUI.travel) + "px";
@@ -910,19 +934,21 @@ function render() {
               const travel = Math.max(0, (e.w * kx) - knobW);
               knob.style.position = "absolute";
               knob.style.top = ((mid * ky) - (knobH / 2)) + "px";
-              knob.style.left = Math.round(state.pos * travel) + "px";
+              knob.style.left = Math.round((e.volume ? volumeFraction() : state.pos) * travel) + "px";
               knob.style.width = knobW + "px";
               knob.style.height = knobH + "px";
               el.appendChild(knob);
-              state.posUI = { played, knob, d: knobW, travel };
-            } else {
+              if (!e.volume) state.posUI = { played, knob, d: knobW, travel };
+            } else if (!e.volume) {
               state.posUI = { played, knob: null, d: 0, travel: 0 };
             }
 
-            el.style.pointerEvents = "auto";
-            el.style.cursor = "pointer";
-            el.style.touchAction = "none";
-            wireSeek(el);
+            if (!e.volume) {
+              el.style.pointerEvents = "auto";
+              el.style.cursor = "pointer";
+              el.style.touchAction = "none";
+              wireSeek(el);
+            }
           }
         }
 
