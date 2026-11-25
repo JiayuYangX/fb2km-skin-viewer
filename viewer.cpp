@@ -477,6 +477,8 @@ struct Settings {
     bool single = false, open = true, debug = false, top = false;
     std::vector<string> layouts;           // preferred subskin ratios, in order
     double tolerance = 15.0;               // percent
+    bool loaded = false;                   // a file was found and read
+    string path;                           // where it was, for the banner
 };
 static Settings g_cfg;
 
@@ -498,6 +500,8 @@ static void load_config() {
     std::error_code ec;
     if (!fs::exists(file, ec)) return;
     string text = read_file(file);
+    g_cfg.loaded = true;
+    g_cfg.path = utf8(file.wstring());
     if (text.size() >= 3 && (unsigned char)text[0] == 0xEF &&
         (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF)
         text.erase(0, 3);                  // a BOM from an editor is not part of the key
@@ -2559,6 +2563,7 @@ int main() {
 
     printf("\n%s %s\n\n", kProduct, kVersion);
     printf("  %-9s %s\n", "listening", link(url, url).c_str());
+    if (g_cfg.loaded) printf("  %-9s %s\n", "config", g_cfg.path.c_str());
     printf("  %-9s %s\n", "opens", "a .fbskin dropped here or double-clicked, a skin folder, audio");
     printf("  %-9s %s\n", "stops", "closing this window");
     printf("\n");
