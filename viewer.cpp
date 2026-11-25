@@ -1779,6 +1779,49 @@ static void regDrop(const wchar_t *sub) {
     RegDeleteTreeW(HKEY_CURRENT_USER, sub);
 }
 
+
+// Windows warns before opening a file that carries the "downloaded from the
+// internet" mark with a handler it does not know. Listing the extension as low
+// risk is the supported way to stop that for one type, per user.
+static void setLowRisk(bool add) {
+    const wchar_t *key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Associations";
+    const wchar_t *name = L"LowRiskFileTypes";
+    std::wstring list;
+    HKEY h = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, key, 0, KEY_READ | KEY_WRITE, &h) == ERROR_SUCCESS) {
+        wchar_t buf[4096] = {};
+        DWORD size = sizeof(buf), type = 0;
+        if (RegQueryValueExW(h, name, nullptr, &type, reinterpret_cast<LPBYTE>(buf), &size) == ERROR_SUCCESS) {
+            list = buf;
+        }
+    }
+    // split on ';', keep everything that is not ours
+    std::vector<std::wstring> parts;
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t semi = list.find(L';', start);
+        std::wstring one = list.substr(start, semi == std::wstring::npos ? std::wstring::npos : semi - start);
+        if (!one.empty() && one != L".fbskin") parts.push_back(one);
+        if (semi == std::wstring::npos) break;
+        start = semi + 1;
+    }
+    if (add) parts.push_back(L".fbskin");
+    std::wstring joined;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (i) joined += L";";
+        joined += parts[i];
+    }
+    if (h == nullptr) {
+        RegCreateKeyExW(HKEY_CURRENT_USER, key, 0, nullptr, 0, KEY_WRITE, nullptr, &h, nullptr);
+    }
+    if (h) {
+        if (joined.empty()) RegDeleteValueW(h, name);
+        else RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(joined.c_str()),
+                            (DWORD)((joined.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(h);
+    }
+}
+
 static bool handleAssociation(bool install) {
     wchar_t exe[MAX_PATH] = {};
     if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return false;
@@ -1789,11 +1832,14 @@ static bool handleAssociation(bool install) {
     if (install) {
         regWrite(L"Software\\Classes\\.fbskin", nullptr, L"fbsv.skin");
         regWrite(L"Software\\Classes\\.fbskin\\OpenWithProgids", L"fbsv.skin", L"");
-        regWrite(L"Software\\Classes\\fbsv.skin", nullptr, L"fb2km skin");
+        regWrite(L"Software\\Classes\\fbsv.skin", nullptr, L"foobar2000 mobile Skin Viewer");
+        regWrite(L"Software\\Classes\\Applications\\fbsv.exe", L"FriendlyAppName",
+                 L"foobar2000 mobile Skin Viewer");
         regWrite(L"Software\\Classes\\fbsv.skin\\DefaultIcon", nullptr, (std::wstring(L"\"") + exe + L"\",0").c_str());
         regWrite(L"Software\\Classes\\fbsv.skin\\shell\\open\\command", nullptr, cmd.c_str());
         regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\SupportedTypes", L".fbskin", L"");
         regWrite(L"Software\\Classes\\Applications\\fbsv.exe\\shell\\open\\command", nullptr, cmd.c_str());
+        setLowRisk(true);
         printf("registered .fbskin for the current user\n");
         printf("pick it once: right click a .fbskin -> Open with -> Choose another app\n");
         return true;
@@ -1812,6 +1858,7 @@ static bool handleAssociation(bool install) {
     else regDrop(L"Software\\Classes\\.fbskin\\OpenWithProgids");
     regDrop(L"Software\\Classes\\fbsv.skin");
     regDrop(L"Software\\Classes\\Applications\\fbsv.exe");
+    setLowRisk(false);
     printf("removed the .fbskin association\n");
     return true;
 }
