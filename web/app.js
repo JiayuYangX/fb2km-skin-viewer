@@ -486,7 +486,9 @@ function parseArm(lines, def, mode, overrides) {
       }
       i += 3; continue;
     }
-    if (line.startsWith("[")) {
+    // only a bare [name] counts as an element; a label line such as
+    // "[rgb-175-175-175]-10" is text left behind by a commented-out block
+    if (/^\[[a-z]+\]$/i.test(line.trim())) {
       // an element this viewer does not know: skip the whole block, guessing how
       // many lines it owns, and tell the console rather than the screen
       const name = line.trim();
