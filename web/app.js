@@ -956,9 +956,13 @@ function render() {
   // the bottom bar mirrors what this render actually used
   const sh = $("status-h");
   if (sh) {
-    // never overwrite what is being typed: a redraw can land between keystrokes
-    if (document.activeElement !== sh) sh.value = String(statusDev || autoStatus);
-    sh.disabled = !sim;
+    // the field is owned by the follow switch, not by the bar's own switch: while
+    // following, the height is worked out, and the bar being off only means it is
+    // not drawn
+    if (document.activeElement !== sh) {
+      sh.value = String(follow ? autoStatus : (state.statusBarH || autoStatus));
+    }
+    sh.disabled = follow;
   }
   const bw = $("device-w"), bh = $("device-h"), bf = $("device-follow");
   if (bw && bh) {
