@@ -222,13 +222,11 @@ button:active { background: var(--ctl-active); }
   border-radius: 6px;
   background: transparent;
 }
-.transport button svg { width: 18px; height: 18px; fill: var(--rail-on); }
+.transport button svg { width: 20px; height: 20px; fill: var(--icon-solid); }
 .transport button:hover { background: var(--ctl-hover); }
-.transport button:hover svg { fill: var(--fg-strong); }
 .transport button:active { background: var(--ctl-active); }
-.transport button:active svg { fill: var(--fg-strong); }
 
-.transport #btn-play svg { width: 20px; height: 20px; fill: var(--rail-on); }
+
 
 #seek {
   flex: 1;
@@ -362,8 +360,9 @@ main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overf
   position: absolute; left: 0; top: 0; width: 100%; box-sizing: border-box;
   font-family: "Roboto", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; }
 #stage .simbar .simicons { display: flex; align-items: center; }
-#stage .simbar svg { display: block; height: 100%; width: auto; }
-#stage .simbar svg:first-child { height: 100%; }
+#stage .simbar svg { display: block; width: auto; }
+#stage .simbar .sim-wifi { height: 100%; }
+#stage .simbar .sim-bat { height: 84%; }
 #stage .simbar > * { pointer-events: none; }
 
 
@@ -427,8 +426,7 @@ main { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; overf
   border: 0; background: transparent; width: 26px; height: 26px; min-width: 0;
   padding: 0; border-radius: 6px; display: grid; place-items: center;
 }
-#theme-toggle svg { width: 16px; height: 16px; fill: var(--icon); }
+#theme-toggle svg { width: 16px; height: 16px; fill: var(--icon-solid); }
 #theme-toggle:hover { background: var(--ctl-hover); border-radius: 6px; }
-#theme-toggle:hover svg { fill: var(--fg-strong); }
 .lang-label { color: var(--fg); }
 
