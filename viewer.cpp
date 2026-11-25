@@ -180,7 +180,12 @@ static string query_escape(const string &v) {
 }
 
 // -------------------------------------------------------------------- cli --
-static const char *kVersion = "0.2.0";
+#ifndef FBSV_VERSION
+#define FBSV_VERSION "0.0.0.dev"
+#endif
+
+static const char *kProduct = "foobar2000 mobile Skin Viewer";
+static const char *kVersion = FBSV_VERSION;
 static const int kBasePort = 17800;
 
 static bool g_vt = false;          // console understands ANSI escapes
@@ -230,7 +235,7 @@ static void logline(const char *fmt, ...) {
 }
 
 static void usage() {
-    printf("%s\n", bold("fb2km skin viewer - preview foobar2000 mobile skins").c_str());
+    printf("%s %s\n", kProduct, kVersion);
     printf("%s\n\n", dim("usage: fbsv [options] [skin | folder] [audio ...]").c_str());
     printf("  %-22s %s\n", "skin | folder", "a .fbskin package, a skin folder, or audio files");
     printf("\n%s\n", bold("options").c_str());
@@ -997,6 +1002,33 @@ static string query_value(const string &target, const char *key) {
     return {};
 }
 
+
+static bool open_skin_path(Session &sess, const fs::path &p, string &err);
+
+// Every input, whenever it arrives, ends up here: the first launch calls it
+// before the server is up, a later launch reaches it through /api/forward.
+static bool apply_inputs(Session &sess, const fs::path &skin,
+                         const std::vector<fs::path> &inputs, string &err) {
+    if (!skin.empty()) {
+        if (!open_skin_path(sess, skin, err)) return false;
+        logline("skin    %s", utf8(sess.root.filename().wstring()).c_str());
+    }
+    for (const auto &in : inputs) {
+        if (is_playlist(in)) {
+            const size_t before = sess.tracks.size();
+            for (auto &t : read_playlist(in)) sess.add(t);
+            logline("list    %zu track(s) from %s", sess.tracks.size() - before,
+                    utf8(in.filename().wstring()).c_str());
+        } else if (fs::is_regular_file(in) && is_audio(in)) {
+            sess.add(fs::absolute(in));
+            logline("audio   %s", utf8(in.filename().wstring()).c_str());
+        } else {
+            logline("skip    %s", utf8(in.wstring()).c_str());
+        }
+    }
+    return true;
+}
+
 // a folder, a skindef.txt, or a .fbskin package: anything the command line accepts
 // add (never replace): opening a second skin keeps the first one available
 
@@ -1654,35 +1686,22 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
     } else if (route.rfind("/brand.png", 0) == 0) {
         respond(c, "200 OK", "image/png", read_resource(L"BRAND_PNG"), "", true);
     } else if (route.rfind("/api/forward", 0) == 0) {
-        // a second launch reaches this: it carries the paths that were handed to
-        // it, and nothing else
+        // a later launch reaches this with the paths it was handed, and nothing
+        // else; it goes through the same call the first launch uses
         const string skin = query_value(target, "skin");
         const string audio = query_value(target, "audio");
-        string err;
-        bool ok = true;
-        if (!skin.empty()) {
-            logline("skin   %s", skin.c_str());
-            if (!open_skin_path(sess, fs::path(wide(skin)), err)) ok = false;
-        }
+        std::vector<fs::path> inputs;
         size_t at = 0;
         while (!audio.empty() && at <= audio.size()) {
             const size_t nl = audio.find('\n', at);
             const string one = audio.substr(at, nl == string::npos ? string::npos : nl - at);
-            if (!one.empty()) {
-                const fs::path path = fs::path(wide(one));
-                if (is_playlist(path)) {
-                    for (auto &t : read_playlist(path)) sess.add(t);
-                    logline("list   %s", one.c_str());
-                } else if (is_audio(path)) {
-                    sess.add(fs::absolute(path));
-                    logline("audio  %s", one.c_str());
-                } else {
-                    logline("skip   %s", one.c_str());
-                }
-            }
+            if (!one.empty()) inputs.push_back(fs::path(wide(one)));
             if (nl == string::npos) break;
             at = nl + 1;
         }
+        string err;
+        const bool ok = apply_inputs(sess, skin.empty() ? fs::path() : fs::path(wide(skin)),
+                                     inputs, err);
         respond(c, "200 OK", "application/json; charset=utf-8",
                 ok ? "{\"ok\":true}"
                    : "{\"ok\":false,\"error\":\"" + json_escape(err) + "\"}");
@@ -2245,7 +2264,7 @@ int main() {
         if (literal) { args.push_back(fs::path(arg)); continue; }
         if (arg == L"--") { literal = true; continue; }
         if (arg == L"-h" || arg == L"--help" || arg == L"-?") { usage(); return 0; }
-        if (arg == L"-V" || arg == L"--version") { printf("fbsv %s\n", kVersion); return 0; }
+        if (arg == L"-V" || arg == L"--version") { printf("%s %s\n", kProduct, kVersion); return 0; }
         if (arg == L"--no-open") { openBrowser = false; continue; }
         if (arg == L"--debug") { debugUrl = true; g_verbose = true; continue; }
         if (arg == L"--single") { singleInstance = true; continue; }
@@ -2374,57 +2393,15 @@ int main() {
     }
 
 
-    fs::path root;
-    std::map<string, string> pkgFiles;
-    if (!skinArg.empty()) {
-        string name = lower(skinArg.filename().string());
-        if (name == "skindef.txt" || name == "skindef.skindef") root = skinArg.parent_path();
-        else if (ext_of(name) == ".fbskin" || ext_of(name) == ".zip") {
-            string raw = read_file(skinArg);
-            vector<uint8_t> buf(raw.begin(), raw.end());
-            vector<ZipEntry> entries;
-            vector<string> skipped;
-            if (!read_package(buf, entries, skipped)) {
-                printf("cannot read %s as a skin package\n", skinArg.string().c_str());
-                return 1;
-            }
-            for (auto &e : entries) {
-                pkgFiles[lower(e.name)] = string((const char *)e.data.data(), e.data.size());
-            }
-            strip_common_folder(pkgFiles);
-            if (pkgFiles.empty()) {
-                printf("package is empty or compressed, nothing to show\n");
-                return 1;
-            }
-            root = skinArg;
-        } else root = skinArg;
-    }
-    if (root.empty() || !fs::exists(root)) {
-        root = fs::current_path();
-        pkgFiles = g_default_black;      // nothing given: the built in default skin
-    }
-
     Session sess;
-    sess.root = fs::absolute(root);
+    sess.root = fs::absolute(fs::current_path());
     if (skinArg.empty()) {
         // nothing was opened: both built in skins are offered, and the white one
         // is what the app itself starts with
-        sess.files.clear();
         remember_skin(sess, "White Skin", sess.root, g_default_white);
         remember_skin(sess, "Black Skin", sess.root, g_default_black);
         sess.active = 0;
         sess.files = sess.sources[0].files;   // the active package, served from memory
-    } else {
-        sess.files = pkgFiles;
-        remember_skin(sess, utf8(sess.root.filename().wstring()), sess.root, std::move(pkgFiles));
-    }
-
-    for (auto &in : inputs) {
-        if (is_playlist(in)) {
-            for (auto &t : read_playlist(in)) sess.add(t);
-        } else if (fs::is_regular_file(in) && is_audio(in)) {
-            sess.add(fs::absolute(in));
-        }
     }
 
     if (!sess.files.empty() && !skinArg.empty()) sess.root = fs::absolute(skinArg);
@@ -2490,18 +2467,22 @@ int main() {
     string url = "http://127.0.0.1:" + std::to_string(port) + "/" +
                  (viewQuery.empty() ? "" : "?" + viewQuery);
 
-    printf("\n%s %s\n\n", bold("fb2km skin viewer").c_str(), kVersion);
-    printf("  %s%s\n", dim("skin    ").c_str(), utf8(sess.root.wstring()).c_str());
-    if (!sess.tracks.empty()) {
-        const Track &first = sess.tracks.front();
-        const Media &m0 = sess.meta_of(first.id);
-        printf("  %s%d in the list\n", dim("tracks  ").c_str(), (int)sess.tracks.size());
-        printf("  %s%s\n", dim("first   ").c_str(), utf8(first.path.filename().wstring()).c_str());
-        if (!m0.artist.empty() || !m0.title.empty())
-            printf("  %s%s - %s\n", dim("tags    ").c_str(), m0.artist.c_str(), m0.title.c_str());
+    printf("\n%s %s\n\n", kProduct, kVersion);
+    printf("  %-9s %s\n", "listening", link(url, url).c_str());
+    printf("  %-9s %s\n", "opens", "a .fbskin dropped here or double-clicked, a skin folder, audio");
+    printf("  %-9s %s\n", "stops", "closing this window");
+    printf("\n");
+
+    // the inputs are applied once the banner is out, so the events read in order;
+    // the very same call a later launch reaches through /api/forward
+    string inputErr;
+    if (!apply_inputs(sess, skinArg, inputs, inputErr)) {
+        printf("cannot open %s: %s\n", utf8(skinArg.wstring()).c_str(), inputErr.c_str());
+        return 1;
     }
-    printf("  %s%s\n", dim("open    ").c_str(), link(url, url).c_str());
-    printf("  %sclose this window to stop\n\n", dim("stop    ").c_str());
+    // a list that arrives with the process starts on its first entry: selected
+    // right away, and played if the browser allows it
+    if (!sess.tracks.empty()) sess.playingId = sess.tracks.front().id;
     fflush(stdout);
     if (pinTop) std::thread(pin_on_top).detach();
     if (openBrowser) {
