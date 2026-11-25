@@ -685,6 +685,9 @@ function setPos(ratio) {
 
 
 function render() {
+  // a volume drag owns the bars while it runs; rebuilding the stage underneath
+  // the pointer would end the gesture
+  if (state.draggingVolume) return;
   const skin = skins.get(state.skin);
   if (!skin) return;
   const L = skin.layouts[state.layout];
@@ -1324,9 +1327,10 @@ function seekThrottled(force) {
   if (force || Date.now() - lastSeek >= SEEK_INTERVAL) seekNow();
 }
 
-// a volume bar is dragged like a seek bar, but it moves the player's volume
-function wireVolume(el) {
-  let dragging = false;
+// One place turns pointer gestures into a 0..1 ratio: a seek bar and a volume bar
+// read the same gesture and only differ in what they do with the number.
+function wireDrag(el, onRatio, onEnd) {
+  let active = false;
 
   const ratioAt = (ev) => {
     const rect = el.getBoundingClientRect();
@@ -1334,68 +1338,58 @@ function wireVolume(el) {
     return Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
   };
 
-  const apply = (r) => {
-    const audio = $("audio");
-    if (audio) audio.volume = r;
-    setVolume(r);
-  };
-
   el.addEventListener("pointerdown", (ev) => {
-    dragging = true;
+    active = true;
     try { el.setPointerCapture(ev.pointerId); } catch (_) {}
     const r = ratioAt(ev);
-    if (r !== null) apply(r);
-    window.addEventListener("pointerup", () => { dragging = false; }, { once: true });
+    if (r !== null) onRatio(r, true);
+    window.addEventListener("pointerup", () => {
+      active = false;
+      if (onEnd) onEnd();
+    }, { once: true });
   });
 
   el.addEventListener("pointermove", (ev) => {
-    if (!dragging) return;
+    if (!active) return;
     const r = ratioAt(ev);
-    if (r !== null) apply(r);
+    if (r !== null) onRatio(r, false);
   });
 }
 
+// a volume bar only sets the volume and repaints the bars
+function wireVolume(el) {
+  el.addEventListener("pointerdown", () => { state.draggingVolume = true; });
+  wireDrag(el, (r) => {
+    const audio = $("audio");
+    setVolume(r);
+    if (audio) audio.volume = r;
+  }, () => { state.draggingVolume = false; render(); });
+}
+
+// a seek bar: the same gesture, but it moves the track instead of the volume
 function wireSeek(el) {
   let dragging = false;
 
-  const ratioAt = (ev) => {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width) return null;
-    return Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
-  };
-
-  el.addEventListener("pointerdown", (ev) => {
-    dragging = true;
-    state.dragging = true;
-    window.addEventListener("pointerup", onWindowUp, { once: true });
-    state.seeking = true;
-    try { el.setPointerCapture(ev.pointerId); } catch (_) {}
-    const r = ratioAt(ev);
-    if (r !== null) { state.dragPos = r; setPos(r); seekThrottled(true); settleSeek(); }
-  });
-
-  el.addEventListener("pointermove", (ev) => {
-    if (!dragging) return;
-    const r = ratioAt(ev);
-    if (r === null) return;
+  wireDrag(el, (r, first) => {
+    if (!dragging) {
+      dragging = true;
+      state.dragging = true;
+      state.seeking = true;
+    }
     state.dragPos = r;
     setPos(r);
-    seekThrottled(false);
+    seekThrottled(first);
     settleSeek();
-  });
-
-  function onWindowUp() {
+  }, () => {
     if (!dragging) return;
     dragging = false;
     state.dragging = false;
     endDrag();
-  }
+  });
 
-  const end = () => onWindowUp();
-
-  el.addEventListener("pointerup", end);
   el.addEventListener("pointercancel", () => { /* the stage was rebuilt; wait for the real up */ });
 }
+
 
 // ------------------------------------------------------------------- audio --
 
@@ -1630,7 +1624,11 @@ async function applyInfo(info, mode = "keep") {
       a.src = "/media?play=" + state.playingId + "&t=" + Date.now();
       state.srcChangedAt = Date.now();
     }
-    if (info.replaygain && info.replaygain.present) {
+    // replaygain is only the starting point: once the volume has been dragged,
+    // that value is the one to keep, across tracks and across syncs
+    if (Number.isFinite(state.volume)) {
+      a.volume = state.volume;
+    } else if (info.replaygain && info.replaygain.present) {
       const db = info.replaygain.track || info.replaygain.album || 0;
       a.volume = Math.min(1, Math.max(0, Math.pow(10, db / 20)));
     } else {
