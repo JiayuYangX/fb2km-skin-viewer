@@ -1360,28 +1360,40 @@ function seekThrottled(force) {
 // read the same gesture and only differ in what they do with the number.
 function wireDrag(el, onRatio, onEnd) {
   let active = false;
+  // the strip is rebuilt whenever the stage is (a track change, say), and a
+  // pointer captured by the old element goes with it. The gesture therefore lives
+  // on the window and measures against the strip's box as it was when pressed,
+  // which is the same box the new element gets.
+  let rect = null;
 
   const ratioAt = (ev) => {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width) return null;
+    if (!rect || !rect.width) return null;
     return Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+  };
+
+  const move = (ev) => {
+    if (!active) return;
+    const r = ratioAt(ev);
+    if (r !== null) onRatio(r, false);
+  };
+
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+    if (!active) return;
+    active = false;
+    if (onEnd) onEnd();
   };
 
   el.addEventListener("pointerdown", (ev) => {
     active = true;
-    try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+    rect = el.getBoundingClientRect();
     const r = ratioAt(ev);
     if (r !== null) onRatio(r, true);
-    window.addEventListener("pointerup", () => {
-      active = false;
-      if (onEnd) onEnd();
-    }, { once: true });
-  });
-
-  el.addEventListener("pointermove", (ev) => {
-    if (!active) return;
-    const r = ratioAt(ev);
-    if (r !== null) onRatio(r, false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   });
 }
 
