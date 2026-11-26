@@ -1175,7 +1175,11 @@ static bool skin_is_usable(const fs::path &dir) {
     while ((pos = text.find(L"skin:", pos)) != std::wstring::npos) {
         size_t eol = text.find(L'\n', pos);
         std::wstring line = text.substr(pos, eol == std::wstring::npos ? std::wstring::npos : eol - pos);
-        size_t sp = line.find_last_of(L" \t\r");
+        // a definition written on Windows ends its lines with CRLF; that \r is not
+        // a separator, and treating it as one left the file name empty
+        while (!line.empty() && (line.back() == L'\r' || line.back() == L' ' || line.back() == L'\t'))
+            line.pop_back();
+        size_t sp = line.find_last_of(L" \t");
         if (sp != std::wstring::npos) {
             std::wstring f = line.substr(sp + 1);
             if (f.size() > 4 && fs::exists(dir / fs::path(f), ec)) return true;
@@ -2040,72 +2044,6 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         }
         respond(c, "200 OK", "application/json; charset=utf-8",
                 "{\"ok\":true,\"count\":" + std::to_string(sess.tracks.size()) + "}");
-    } else if (route.rfind("/api/skins", 0) == 0) {
-        std::ostringstream list;
-        list << "[";
-        bool firstEntry = true;
-        auto addLabel = [&](const string &label) {
-            if (!firstEntry) list << ",";
-            firstEntry = false;
-            list << "\"" << json_escape(label) << "\"";
-        };
-        std::error_code ec2;
-        for (const auto &src : sess.sources) {
-            if (src.label.empty()) continue;
-            if (!src.files.empty() || skin_is_usable(src.root)) {
-                addLabel(src.label);
-                continue;
-            }
-            // a folder that only holds skins: offer each subskin it contains
-            for (auto it = fs::directory_iterator(src.root, ec2);
-                 !ec2 && it != fs::directory_iterator(); it.increment(ec2)) {
-                if (!it->is_directory()) continue;
-                if (skin_is_usable(it->path()))
-                    addLabel(src.label + "/" + utf8(it->path().filename().wstring()));
-            }
-        }
-        list << "]";
-        { respond(c, "200 OK", "application/json; charset=utf-8", list.str()); shutdown(c, SD_SEND); closesocket(c); return; }
-        // every folder under the skin root that carries its own skindef.txt is a
-        // skin in its own right; the page lists them so any layout of folders works
-        std::ostringstream o;
-        o << "[";
-        bool first = true;
-        auto add = [&](const string &rel) {
-            if (!first) o << ",";
-            first = false;
-            o << "\"" << json_escape(rel) << "\"";
-        };
-        add("");                                        // the root itself
-        std::error_code ec;
-        for (auto it = fs::directory_iterator(sess.root, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
-            if (!it->is_directory()) continue;
-            fs::path def = find_def(it->path());
-            if (!fs::exists(def, ec)) continue;
-            // a real skin points at layouts that exist next to its skindef; a
-            // template folder references files that are not there
-            string raw = read_file(def);
-            std::wstring text;
-            for (size_t i = 0; i + 1 < raw.size(); i += 2)
-                text.push_back((wchar_t)((unsigned char)raw[i] | ((unsigned char)raw[i + 1] << 8)));
-            bool usable = false;
-            size_t pos = 0;
-            while ((pos = text.find(L"skin:", pos)) != std::wstring::npos) {
-                size_t eol = text.find(L'\n', pos);
-                std::wstring line = text.substr(pos, eol == std::wstring::npos ? std::wstring::npos : eol - pos);
-                size_t sp = line.find_last_of(L" \t\r");
-                if (sp != std::wstring::npos) {
-                    std::wstring file = line.substr(sp + 1);
-                    if (file.size() > 4 && file.substr(file.size() - 4) == L".txt" &&
-                        fs::exists(it->path() / fs::path(file), ec)) { usable = true; break; }
-                }
-                pos = eol == std::wstring::npos ? text.size() : eol;
-            }
-            if (!usable) continue;
-            add(utf8(it->path().filename().wstring()));
-        }
-        o << "]";
-        respond(c, "200 OK", "application/json; charset=utf-8", o.str());
     } else if (route.rfind("/api/settings", 0) == 0) {
         respond(c, "200 OK", "application/json; charset=utf-8", settings_json());
     } else if (route.rfind("/api/version", 0) == 0) {
