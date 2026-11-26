@@ -1749,8 +1749,15 @@ function highlightRow() {
   const id = state.stopped ? null : String(state.playingId);
   [...list.children].forEach((li) =>
     li.classList.toggle("current", id !== null && li.dataset.id === id));
+  // follow the playing row only when it changes. The mark is repainted on every
+  // button refresh, and scrolling with it dragged the list back to that row all
+  // the while a track played.
   const row = list.children[state.index];
-  if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  const key = id + "|" + state.index;
+  if (row && row.scrollIntoView && key !== state.shownRow) {
+    state.shownRow = key;
+    row.scrollIntoView({ block: "nearest" });
+  }
 }
 
 async function loadList() {
