@@ -378,6 +378,14 @@ function resolveColour(value, def) {
 // Two numbers make the loudness: the one the volume bar shows, which is what a
 // phone's system volume would be, and a replaygain factor that only ever scales
 // playback. The bar shows the first, the speakers get the product.
+// The strip's width rarely lands on a whole pixel, so the knob is placed at a
+// fractional offset. Rounding it left the marker up to half a pixel short of the
+// far end, which showed up as a hairline of the rail's own colour beside it.
+function knobLeft(frac, travel) {
+  const t = Math.max(0, Math.min(1, frac));
+  return (t * travel).toFixed(2) + "px";
+}
+
 function volumeFraction() {
   const v = Number.isFinite(state.volume) ? state.volume : 1;
   return Math.max(0, Math.min(1, v));
@@ -396,7 +404,7 @@ function setVolume(ratio) {
   applyVolume();
   for (const bar of state.volumeBars || []) {
     bar.played.style.width = (state.volume * 100) + "%";
-    if (bar.knob) bar.knob.style.left = Math.round(state.volume * bar.travel) + "px";
+    if (bar.knob) bar.knob.style.left = knobLeft(state.volume, bar.travel);
   }
 }
 
@@ -717,7 +725,7 @@ function paintPosition() {
   if (ui) {
     if (ui.played) ui.played.style.width = pct + "%";
     // the marker travels the free distance, not past the ends of the strip
-    if (ui.knob) ui.knob.style.left = Math.round(state.pos * ui.travel) + "px";
+    if (ui.knob) ui.knob.style.left = knobLeft(state.pos, ui.travel);
   }
   const seek = $("seek");
   if (seek) {
@@ -1008,7 +1016,7 @@ function render() {
               if (!e.volume && state.posUI && state.posUI.knob === knob) {
                 state.posUI.d = w;
                 state.posUI.travel = Math.max(0, (e.w * kx) - w);
-                knob.style.left = Math.round(state.pos * state.posUI.travel) + "px";
+                knob.style.left = knobLeft(state.pos, state.posUI.travel);
               }
             };
             if (!artSize(knobURL)) artSize(knobURL, refit);
@@ -1018,7 +1026,7 @@ function render() {
               const travel = Math.max(0, (e.w * kx) - knobW);
               knob.style.position = "absolute";
               knob.style.top = ((mid * ky) - (knobH / 2)) + "px";
-              knob.style.left = Math.round((e.volume ? volumeFraction() : state.pos) * travel) + "px";
+              knob.style.left = knobLeft(e.volume ? volumeFraction() : state.pos, travel);
               knob.style.width = knobW + "px";
               knob.style.height = knobH + "px";
               el.appendChild(knob);
