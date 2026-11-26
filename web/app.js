@@ -55,7 +55,7 @@ const state = {
   shuffle: false, repeatAll: false, onetrack: false,
   entries: [], seeking: false, fields: {}, nextFields: {}, stopAfter: false,
   pos: 0, cover: null, nextCover: null, index: 0, count: 0, fingerprint: "",
-  buttons: [], posUI: null,
+  buttons: [], bars: [],
   pressedKey: null,          // the action of the key being held down right now
   artEl: null, artNextEl: null,   // the two [albumart] boxes of the current frame
   simStatus: false,          // draw the phone's status bar over the skin
@@ -122,21 +122,6 @@ const fitCanvas = document.createElement("canvas").getContext("2d");
 // width is the clipped one, so the DOM cannot tell us it is still too wide
 // the artwork fills its box's width and keeps its own height; only when that
 // height would overrun the box is it squeezed, never stretched. That needs the
-// picture's own size, which arrives asynchronously, so it is cached here and the
-// element is re-measured once it is known.
-const artSizes = new Map();
-function artSize(url, onKnown) {
-  const known = artSizes.get(url);
-  if (known) return known;
-  const img = new Image();
-  img.onload = () => {
-    artSizes.set(url, { w: img.naturalWidth, h: img.naturalHeight });
-    if (onKnown) onKnown();
-  };
-  img.src = url;
-  return null;
-}
-
 // how light a skin's background is decides whether the bar reads dark or light
 function luminanceOf(colour) {
   const text = String(colour || "").trim();
@@ -381,11 +366,6 @@ function resolveColour(value, def) {
 // The strip's width rarely lands on a whole pixel, so the knob is placed at a
 // fractional offset. Rounding it left the marker up to half a pixel short of the
 // far end, which showed up as a hairline of the rail's own colour beside it.
-function knobLeft(frac, travel) {
-  const t = Math.max(0, Math.min(1, frac));
-  return (t * travel).toFixed(2) + "px";
-}
-
 function volumeFraction() {
   const v = Number.isFinite(state.volume) ? state.volume : 1;
   return Math.max(0, Math.min(1, v));
@@ -402,10 +382,7 @@ function applyVolume() {
 function setVolume(ratio) {
   state.volume = Math.min(1, Math.max(0, ratio));
   applyVolume();
-  for (const bar of state.volumeBars || []) {
-    bar.played.style.width = (state.volume * 100) + "%";
-    if (bar.knob) bar.knob.style.left = knobLeft(state.volume, bar.travel);
-  }
+  paintBars();
 }
 
 function parseArm(lines, def, mode, overrides) {
@@ -638,7 +615,8 @@ function coverBlob(url) {
         // used to replace every key while the list was being prefetched
         const box = state.cover === url ? state.artEl
                   : state.nextCover === url ? state.artNextEl : null;
-        if (box) box.style.backgroundImage = 'url("' + src + '")';
+        // the box is an <img> now: hand it the picture instead of a background
+        if (box) { box.style.display = ""; box.src = src; }
       })
       .catch(() => {});
     state.blobWait.set(key, wait);
@@ -719,14 +697,27 @@ function shownTime() {
   return state.pos * d;
 }
 
+// A strip is a strip: the seek bar and the volume bar differ only in which ratio
+// drives them, so both are painted the same way, from the same kind of record.
+function barFrac(bar) {
+  return bar.volume ? volumeFraction() : state.pos;
+}
+
+function paintBar(bar) {
+  const f = barFrac(bar);
+  if (bar.played) bar.played.style.width = (f * 100).toFixed(2) + "%";
+  // the marker travels the free distance; the far end is rounded up so it finishes
+  // on the strip's edge rather than half a pixel beside it
+  if (bar.knob) bar.knob.style.left = Math.round(f * Math.ceil(bar.travel)) + "px";
+}
+
+function paintBars() {
+  for (const bar of state.bars) paintBar(bar);
+}
+
 function paintPosition() {
   const pct = (state.pos * 100).toFixed(2);
-  const ui = state.posUI;
-  if (ui) {
-    if (ui.played) ui.played.style.width = pct + "%";
-    // the marker travels the free distance, not past the ends of the strip
-    if (ui.knob) ui.knob.style.left = knobLeft(state.pos, ui.travel);
-  }
+  paintBars();
   const seek = $("seek");
   if (seek) {
     seek.style.setProperty("--p", pct + "%");
@@ -761,7 +752,6 @@ function render() {
     ? (hasNext ? L.els : (L.elsNoNext.length ? L.elsNoNext : L.els))
     : (L.elsAlt.length ? L.elsAlt : L.els);
 
-  state.volumeBars = [];
   const box = $("wrap");
   const availW = Math.max(0, box.clientWidth - 32);
   const availH = Math.max(0, box.clientHeight - 32);
@@ -815,7 +805,7 @@ function render() {
     ";opacity:0;pointer-events:none;";
   const token = (state.renderToken = (state.renderToken || 0) + 1);
   state.buttons = [];
-  state.posUI = null;
+  state.bars = [];
   $("status").textContent = L.w + "x" + L.h + "  " + els.length + " elements";
 
 
@@ -882,14 +872,18 @@ function render() {
       if (raw.includes("[length]")) el.dataset.total = "1";
 
     } else if (e.t === "art") {
-      // the artwork is the background of a div, not an <img>: a picture that
-      // fails to load then leaves an empty square rather than the browser's
-      // broken-image frame. An <img> paints perfectly well; the flicker this
-      // used to show was the frame swap, which render() now holds back.
+      // the picture lives in an <img> inside a plain box: the box keeps the layout's
+      // size and clips, the picture is sized the way the background used to be. A
+      // picture that will not load is hidden and the box stays blank.
       el = document.createElement("div");
-      // the old mirrored type is the same picture turned upside down, which is
-      // all the 1.6.9 app does with it
-      if (e.mirror) el.style.transform = "scaleY(-1)";
+      el.style.overflow = "hidden";
+      const img = document.createElement("img");
+      img.draggable = false;
+      img.style.position = "absolute";
+      img.style.left = "0";
+      img.style.display = "none";
+      el.appendChild(img);
+
       // the placeholder is whatever the skin names and nothing else: a skin that
       // names none shows an empty square, which is what the device does
       const fallback = imgURL(skin, skin.def.defaultart);
@@ -907,160 +901,126 @@ function render() {
       // the skin's own placeholder is what the device shows
       const none = !wanted && showTrack;
       const shown = none ? null : (src || fallback);
+
+      // the decision is made in the device's own pixels, not the display's: the
+      // phone floors the box height there, and a scaled-down preview must not
+      // change the answer
+      const boxW = e.w * sx, boxH = e.h * sy;
+      // width first, the picture's own height after; squeeze only if it would
+      // overflow the box, which is what the phone does with a frame too short
+      const place = () => {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        let mode;
+        if (e.mirror) mode = "fill";
+        else if (e.backdrop) mode = "cover";
+        else if (!w || !h) mode = "width";            // not measured yet: keep the shape
+        else {
+          const scaledH = h * (boxW / w);
+          mode = scaledH <= boxH + 0.5 ? "width"      // shorter than the box: keep the shape
+            : (Math.floor(boxH) / scaledH >= 0.95 ? "fill" : "contain");
+        }
+        const flip = e.mirror ? " scaleY(-1)" : "";
+        if (mode === "width") {
+          img.style.width = "100%";
+          img.style.height = "auto";
+          img.style.objectFit = "fill";
+          img.style.top = "50%";
+          img.style.transform = "translateY(-50%)" + flip;
+        } else {
+          img.style.width = "100%";
+          img.style.height = "100%";
+          img.style.objectFit = mode;
+          img.style.top = "0";
+          img.style.transform = flip;
+        }
+      };
+      img.addEventListener("load", place);
+      img.addEventListener("error", () => { img.style.display = "none"; });
       if (shown) {
-        el.style.backgroundImage = 'url("' + shown + '")';
-        el.style.backgroundPosition = "center";
-        el.style.backgroundRepeat = "no-repeat";
-        // the decision is made in the device's own pixels, not the display's:
-        // the phone floors the box height there, and a scaled-down preview must
-        // not change the answer
-        const boxW = e.w * sx, boxH = e.h * sy;
-        // width first, the picture's own height after; squeeze only if it would
-        // overflow the box, which is what the phone does with a frame too short
-        const fitArt = (url) => {
-          const size = artSize(url, () => {
-            // the picture's size arrives after the element is on screen, and this
-            // call's return value has nowhere to go: apply it here
-            if (el.style.backgroundImage.indexOf(url) >= 0) {
-              el.style.backgroundSize = fitArt(url);
-            }
-          });
-          if (!size) return "100% auto";                 // unknown yet: keep the shape
-          const scaledH = size.h * (boxW / size.w);
-          if (scaledH <= boxH + 0.5) return "100% auto";  // shorter than the box: keep the shape
-          // A box within five percent of the picture's shape is squashed to fill
-          // it; a box further off keeps the picture's shape and is centred. The
-          // phone's own border sits somewhere between 4.6 and 5 percent and its
-          // exact rule is not pinned down; five percent is the simpler choice
-          // until the app's own code has been read. It floors the box height
-          // before comparing (a 457.92 box behaves like 457, while 458 fills).
-          return Math.floor(boxH) / scaledH >= 0.95 ? "100% 100%" : "contain";
-        };
-        // The two old types are measured against the 1.6.9 app: mainback zooms in
-        // until the box is covered (no desaturation and no dimming, whatever the
-        // old notes claim), and mainmirrored squashes the whole picture into its
-        // strip so the result reads as a reflection. Plain main keeps its shape,
-        // like every other picture in a layout.
-        if (e.mirror) el.style.backgroundSize = "100% 100%";
-        else if (e.backdrop) el.style.backgroundSize = "cover";
-        else el.style.backgroundSize = fitArt(shown);
+        img.style.display = "";
+        img.src = shown;
+        place();
       }
-      if (e.next) state.artNextEl = el; else state.artEl = el;
+      if (e.next) state.artNextEl = img; else state.artEl = img;
 
     } else if (e.t === "pos") {
-        el = document.createElement("div");
-        const mid = e.h / 2;
+      el = document.createElement("div");
+      el.style.overflow = "hidden";
+      const boxW = e.w * kx, boxH = e.h * ky;
 
-        // a skin that ships its own slider pictures gets those, and a picture it
-        // lacks is simply not drawn: the device takes nothing from the built-in
-        // skin for this element
-        const posImage = (file) => (!file ? null : imgURL(skin, file));
-        const paint = (node, file, size) => {
-          const url = posImage(file);
-          if (!url) return false;
-          node.style.backgroundImage = 'url("' + url + '")';
-          node.style.backgroundSize = size;
-          node.style.backgroundRepeat = "no-repeat";
-          node.style.backgroundPosition = "center";
-          return true;
-        };
+      // every picture in a strip is an <img>: a missing one leaves that part blank,
+      // a broken one is hidden, and the marker's own size is readable from it
+      const picture = (file, css) => {
+        const url = file ? imgURL(skin, file) : null;
+        if (!url) return null;
+        const node = document.createElement("img");
+        node.draggable = false;
+        node.style.cssText = css;
+        node.addEventListener("error", () => { node.style.display = "none"; });
+        node.src = url;
+        return node;
+      };
+      const drag = () => {
+        el.style.pointerEvents = "auto";
+        el.style.cursor = "pointer";
+        el.style.touchAction = "none";
+        if (e.volume) wireVolume(el); else wireSeek(el);
+      };
 
-        const track = document.createElement("div");
-        const hasBar = paint(track, e.bar, "100% 100%");
-        if (!hasBar) {
-          el.style.pointerEvents = "auto";
-          el.style.cursor = "pointer";
-          el.style.touchAction = "none";
-          wireSeek(el);
-        } else {
-          track.style.position = "absolute";
-          track.style.left = "0";
-          track.style.right = "0";
-          track.style.top = "0";
-          track.style.height = (e.h * ky) + "px";
-          el.appendChild(track);
+      const track = picture(e.bar, "position:absolute;left:0;top:0;width:100%;height:" +
+        boxH + "px;object-fit:fill;");
+      if (!track) {
+        drag();                       // a blank strip is still draggable
+      } else {
+        el.appendChild(track);
+        // a volume bar has something to show with or without a track; a seek bar
+        // only once the player holds one
+        if (showTrack || e.volume) {
+          const played = document.createElement("div");
+          played.style.cssText = "position:absolute;left:0;top:0;height:" + boxH +
+            "px;overflow:hidden;width:" +
+            ((e.volume ? volumeFraction() : state.pos) * 100) + "%;";
+          // the played piece is the same picture clipped to the elapsed width, not
+          // the whole picture squeezed into it (that looked faint)
+          const hot = picture(e.barHot || e.bar, "position:absolute;left:0;top:0;width:" +
+            boxW + "px;height:" + boxH + "px;object-fit:fill;");
+          if (hot) played.appendChild(hot);
+          el.appendChild(played);
 
-          // a volume bar has something to show with or without a track; a seek bar
-          // only once the player holds one
-          if (showTrack || e.volume) {
-            const played = document.createElement("div");
-            played.style.position = "absolute";
-            played.style.left = "0";
-            played.style.top = "0";
-            played.style.height = (e.h * ky) + "px";
-            // a volume bar reads the player's own volume, a seek bar the track's
-            // progress
-            const frac = e.volume ? volumeFraction() : state.pos;
-            played.style.width = (frac * 100) + "%";
-            // the played piece is the same picture clipped to the elapsed width,
-            // not the whole picture squeezed into it (that looked faint)
-            played.style.backgroundImage = 'url("' + posImage(e.barHot || e.bar) + '")';
-            played.style.backgroundSize = (e.w * kx) + "px " + (e.h * ky) + "px";
-            played.style.backgroundPosition = "left center";
-            played.style.backgroundRepeat = "no-repeat";
-            el.appendChild(played);
+          const bar = { played, knob: null, travel: 0, volume: !!e.volume };
+          state.bars.push(bar);
 
-            const knob = document.createElement("div");
-            // The phone draws the marker at the picture's own pixel width scaled by
-            // kx, and at the bar's full height: a 200x200 marker in a 1000x90 bar
-            // came out 200 wide and 90 tall, and the default skin's 140x140 one
-            // came out 67 by 84 on a 1080 wide screen.
-            const knobURL = posImage(e.knob);
-            const knobH = e.knob ? e.h * ky : 0;
-            const knobW = e.knob ? (artSize(knobURL) ? artSize(knobURL).w * kx : knobH) : 0;
-            const refit = () => {
-              const size = artSize(knobURL);
-              if (!size) return;
-              const w = size.w * kx;
+          // the marker is as wide as its own picture, at the strip's full height; a
+          // picture not measured yet starts square and corrects itself on load
+          const knob = picture(e.knob, "position:absolute;left:0;top:0;object-fit:fill;" +
+            "height:" + boxH + "px;width:" + boxH + "px;");
+          if (knob) {
+            bar.knob = knob;
+            bar.travel = Math.max(0, boxW - boxH);
+            el.appendChild(knob);
+            const measure = () => {
+              const w = (knob.naturalWidth || 0) * kx;
+              if (!w) return;
               knob.style.width = w + "px";
-              if (!e.volume && state.posUI && state.posUI.knob === knob) {
-                state.posUI.d = w;
-                state.posUI.travel = Math.max(0, (e.w * kx) - w);
-                knob.style.left = knobLeft(state.pos, state.posUI.travel);
-              }
+              bar.travel = Math.max(0, boxW - w);
+              paintBar(bar);
             };
-            if (!artSize(knobURL)) artSize(knobURL, refit);
-            if (paint(knob, e.knob, "100% 100%")) {
-              // it slides over the distance the strip leaves free, so it never
-              // hangs past either end of it
-              const travel = Math.max(0, (e.w * kx) - knobW);
-              knob.style.position = "absolute";
-              knob.style.top = ((mid * ky) - (knobH / 2)) + "px";
-              knob.style.left = knobLeft(e.volume ? volumeFraction() : state.pos, travel);
-              knob.style.width = knobW + "px";
-              knob.style.height = knobH + "px";
-              el.appendChild(knob);
-              if (e.volume) {
-                state.volumeBars.push({ played, knob, travel });
-              } else {
-                state.posUI = { played, knob, d: knobW, travel };
-              }
-            } else if (!e.volume) {
-              state.posUI = { played, knob: null, d: 0, travel: 0 };
-            }
-
-            el.style.pointerEvents = "auto";
-            el.style.cursor = "pointer";
-            el.style.touchAction = "none";
-            if (e.volume) wireVolume(el); else wireSeek(el);
+            if (knob.complete && knob.naturalWidth) measure();
+            knob.addEventListener("load", measure);
+            paintBar(bar);
           }
+          drag();
         }
+      }
 
-      } else if (e.t === "btn" || e.t === "image") {
+    } else if (e.t === "btn" || e.t === "image") {
       // the menu key is drawn like the device shows it; pressing it does nothing
       el = document.createElement("img");
       el.draggable = false;                                 // no drag ghosts
       el.style.objectFit = "fill";                          // skin pictures stretch to the rect
-      // a picture that cannot be fetched must not turn into a broken icon: keep
-      // the last one that worked, or hide the element entirely
-      el.addEventListener("load", () => { if (el.getAttribute("src")) el.dataset.prev = el.getAttribute("src"); });
-      el.addEventListener("error", () => {
-        // a picture the skin lacks is not drawn; only the skindef images are
-        // taken from the built-in skin, never the layout ones
-        const prev = el.dataset.prev;
-        if (prev && el.getAttribute("src") !== prev) el.src = prev;
-        else el.style.visibility = "hidden";
-      });
+      // a picture that cannot be fetched is simply not drawn: blank, never the
+      // browser's broken-image frame
+      el.addEventListener("error", () => { el.style.visibility = "hidden"; });
       if (e.t === "btn") {
         el.style.cursor = "pointer";
         el.style.touchAction = "none";
@@ -1607,7 +1567,7 @@ function attachAudio(a) {
     // the clock write here is what made the bars jump about
     if (a.duration && !state.seeking) {
       state.pos = a.currentTime / a.duration;
-      if (!state.posUI) render();        // the bar was not on screen yet
+      if (!state.bars.some((b) => !b.volume)) render();   // the bar was not on screen yet
       paintPosition();
     }
     updateClocks();
