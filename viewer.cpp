@@ -1701,6 +1701,9 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
     if (g_verbose) printf("%s %s (%zu)\n", clen ? "POST" : "GET", target.c_str(), body.size());
     std::unique_lock<std::mutex> guard(mtx);
 
+    // which stream the console last announced: a pause and resume must not repeat
+    // it, while opening a track again (which comes through a jump) must
+    static int announced = -1;
     string route = target.substr(0, target.find('?'));
     if (serve_web_asset(c, route)) {
         // straight from the resource table
@@ -2073,23 +2076,27 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         int want = (int)std::strtol(query_value(target, "id").c_str(), nullptr, 10);
         int pos = sess.indexOf(want);
         if (pos >= 0) {
-            logline("track  %d/%d", pos + 1, (int)sess.tracks.size());
             sess.playingId = want;
             sess.playingPath = sess.tracks[pos].path;
+            announced = -1;             // a new stream: let its start line through
         }
         respond(c, "200 OK", "application/json; charset=utf-8", info_json(sess));
     } else if (route.rfind("/api/started", 0) == 0) {
-        const Track *now = nullptr;
-        for (auto &t : sess.tracks) if (t.id == sess.playingId) now = &t;
-        logline("play   %s", now ? utf8(now->path.filename().wstring()).c_str() : "");
         // the page tells us playback really began; that, not a byte request, is
         // what makes a row "the one being heard"
         int want = (int)std::strtol(query_value(target, "id").c_str(), nullptr, 10);
         int pos = sess.indexOf(want);
         if (pos >= 0) { sess.playingId = want; sess.playingPath = sess.tracks[pos].path; }
+        // one line per stream: resuming the same track is not a new one
+        if (pos >= 0 && want != announced) {
+            announced = want;
+            logline("play   %s (%d/%d)", utf8(sess.tracks[pos].path.filename().wstring()).c_str(),
+                    pos + 1, (int)sess.tracks.size());
+        }
         respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
     } else if (route.rfind("/api/stop", 0) == 0) {
         logline("stop");
+        announced = -1;                 // playing it again opens a new stream
         sess.playingPath.clear();      // the file is released; the list decides next
         sess.resolve();
         respond(c, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
