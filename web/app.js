@@ -592,7 +592,10 @@ function prefetchNeighbours() {
   const at = ids.indexOf(state.playingId);
   for (const step of [-1, 1]) {
     const id = ids[at + step];
-    if (id != null) coverBlob("/cover?play=" + id);
+    if (id != null) {
+      const entry = state.entries.find((e) => e.id === id);
+      coverBlob((entry && entry.coverUrl) || "/cover?play=" + id);
+    }
   }
 }
 
@@ -629,7 +632,7 @@ function coverBlob(url) {
 async function prefetchCovers() {
   for (const entry of state.entries) {
     if (!entry || entry.id == null) continue;
-    const url = "/cover?play=" + entry.id;
+    const url = entry.coverUrl || "/cover?play=" + entry.id;
     coverBlob(url);
     const wait = state.blobWait.get("cover " + url);
     if (wait) await wait;
@@ -1695,11 +1698,13 @@ async function refreshNext() {
   if (!state.count) { state.nextCover = null; return; }
   let id = autoNext();
   if (id < 0) id = state.playingId;           // nothing after this: show itself
+  let coverUrl = null;
   try {
     const info = await (await fetch("/api/peek?id=" + id, { cache: "no-store" })).json();
     state.nextFields = info.fields || { title: info.title || "", artist: info.artist || "" };
+    coverUrl = info.coverUrl || null;
   } catch (e) { /* keep the last one */ }
-  state.nextCover = "/cover?play=" + id;
+  state.nextCover = coverUrl || "/cover?play=" + id;
 }
 
 async function goto(id) {

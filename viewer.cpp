@@ -1334,6 +1334,28 @@ static string fields_json(const Media &m, const fs::path &file) {
     return out;
 }
 
+// A cover url names the file, not just its place in the list: ?play=1 points at a
+// different song once the playlist changes, and a picture cached under the old
+// url would be somebody else's. The stamp and size make it self-invalidating too.
+static string cover_token(const fs::path &p) {
+    std::error_code ec;
+    auto stamp = fs::last_write_time(p, ec);
+    uint64_t t = ec ? 0 : (uint64_t)stamp.time_since_epoch().count();
+    uint64_t sz = 0;
+    if (fs::is_regular_file(p, ec)) sz = (uint64_t)fs::file_size(p, ec);
+    uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : utf8(p.wstring())) { h ^= c; h *= 1099511628211ull; }
+    h ^= t; h *= 1099511628211ull;
+    h ^= sz; h *= 1099511628211ull;
+    std::ostringstream o;
+    o << std::hex << (h & 0xffffffffull);
+    return o.str();
+}
+
+static string cover_url(int id, const fs::path &p) {
+    return "/cover?play=" + std::to_string(id) + "&h=" + cover_token(p);
+}
+
 static string info_json(Session &s) {
     const Media &m = s.now_meta();
     int pos = s.indexOf(s.playingId);
@@ -1350,7 +1372,8 @@ static string info_json(Session &s) {
       << ",\"slot\":" << slot << ",\"count\":" << s.tracks.size() << ",";
     o << "\"fields\":{" << fields_json(m, slotOk ? s.tracks[slot].path : fs::path()) << "},";
     o << "\"cover\":" << (m.cover.empty() ? "false" : "true") << ",";
-    o << "\"coverUrl\":\"/cover?play=" << s.playingId << "\",";
+    o << "\"coverUrl\":\"" << cover_url(s.playingId, slotOk ? s.tracks[slot].path : s.playingPath)
+      << "\",";
     o << "\"replaygain\":{\"track\":" << m.rg_track
       << ",\"album\":" << m.rg_album << ",\"present\":"
       << (m.has_rg ? "true" : "false") << "}}";
@@ -1367,6 +1390,7 @@ static string peek_json(Session &s, size_t i) {
       << ",\"label\":\"" << json_escape(utf8(t.path.filename().wstring()))
       << "\",\"title\":\"" << json_escape(m.title) << "\",\"artist\":\"" << json_escape(m.artist)
       << "\",\"album\":\"" << json_escape(m.album)
+      << "\",\"coverUrl\":\"" << cover_url(t.id, t.path)
       << "\",\"fields\":{" << fields_json(m, t.path) << "}}";
     return o.str();
 }
@@ -1720,7 +1744,8 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
             o << "{\"id\":" << t.id
               << ",\"name\":\"" << json_escape(utf8(t.path.filename().wstring()))
               << "\",\"title\":\"" << json_escape(m.title)
-              << "\",\"artist\":\"" << json_escape(m.artist) << "\"}";
+              << "\",\"artist\":\"" << json_escape(m.artist)
+              << "\",\"coverUrl\":\"" << cover_url(t.id, t.path) << "\"}";
         }
         o << "]";
         respond(c, "200 OK", "application/json; charset=utf-8", o.str());
@@ -2066,13 +2091,16 @@ static void handle_client(SOCKET c, Session &sess, std::mutex &mtx) {
         if (byId > 0) want = byId;
         const Media &cm = sess.meta_of(want);
         // a track's artwork never changes, so it can be cached like the skin
+        // only a url that names the track may be cached for a week; a bare ?play=N
+        // would go stale as soon as the list changes
+        const bool named = !query_value(target, "h").empty();
         if (!cm.cover.empty()) {
             const std::string &small = sess.thumb_of(want);
             if (!small.empty())
-                respond(c, "200 OK", "image/jpeg", small, "", true);
+                respond(c, "200 OK", "image/jpeg", small, "", named);
             else
                 respond(c, "200 OK", cm.cover_mime.empty() ? "image/jpeg" : cm.cover_mime,
-                        string((const char *)cm.cover.data(), cm.cover.size()), "", true);
+                        string((const char *)cm.cover.data(), cm.cover.size()), "", named);
         }
         else respond(c, "404 Not Found", "text/plain", "no cover");
     } else if (route.rfind("/api/jump", 0) == 0) {
