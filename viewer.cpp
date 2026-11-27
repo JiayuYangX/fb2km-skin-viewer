@@ -425,6 +425,10 @@ static bool read_zip(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<s
         if (p + 46 > buf.size() || u32(p) != 0x02014b50) break;
         uint16_t method = u16(p + 10);
         uint32_t csize = u32(p + 20);
+        // the uncompressed size belongs to this entry and has to be read before p
+        // moves on; read afterwards it was the next entry's, and a deflated file
+        // followed by a smaller one could not be inflated into a buffer that size
+        uint32_t usize = u32(p + 24);
         uint16_t nlen = u16(p + 28), elen = u16(p + 30), clen = u16(p + 32);
         uint32_t lho = u32(p + 42);
         string name((const char *)&buf[p + 46], nlen);
@@ -443,7 +447,6 @@ static bool read_zip(const vector<uint8_t> &buf, vector<ZipEntry> &out, vector<s
             // deflate: most skins published for the app use it
             z_stream zs{};
             if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) { skipped.push_back(name); continue; }
-            size_t usize = u32(p + 24);
             if (usize == 0) usize = csize * 8;
             e.data.resize(usize);
             zs.next_in = const_cast<Bytef *>(buf.data() + start);
